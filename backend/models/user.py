@@ -1,0 +1,50 @@
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from typing import List, Optional, Annotated
+from bson import ObjectId
+from datetime import datetime
+
+
+# Custom ObjectId type for Pydantic v2
+PyObjectId = Annotated[str, Field(description="MongoDB ObjectId as string")]
+
+
+class User(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str}
+    )
+    
+    id: Optional[PyObjectId] = Field(default=None, alias="_id")
+    name: str = Field(..., min_length=1, max_length=100)
+    email: EmailStr = Field(...)
+    hashed_password: str = Field(...)
+    location: Optional[str] = Field(None, max_length=100)
+    preferences: Optional[List[str]] = Field(default_factory=list)
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
+
+class UserCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    email: EmailStr
+    password: str = Field(..., min_length=6)
+    location: Optional[str] = Field(None, max_length=100)
+    preferences: Optional[List[str]] = Field(default_factory=list)
+
+
+class UserLogin(BaseModel):
+    username: str  # This will be the email
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: str
+    name: str
+    email: str
+    location: Optional[str] = None
+    preferences: List[str] = []
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
