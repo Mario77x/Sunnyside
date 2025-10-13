@@ -81,3 +81,10 @@ build/
 # Temporary files
 *.tmp
 *.temp
+
+# Test user data - DO NOT COMMIT
+test-user.json
+test-user-*.json
+**/test-user.json
+**/test-user-*.json
+frontend/src/utils/testAuth.ts

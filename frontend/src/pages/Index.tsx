@@ -9,6 +9,7 @@ import { showSuccess, showError } from '@/utils/toast';
 import { calculateDeadline } from '@/utils/deadlineCalculator';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService, Activity } from '@/services/api';
+import WeatherWidget from '@/components/WeatherWidget';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -404,6 +405,17 @@ const Index = () => {
               Test Guest Experience
             </Button>
           </div>
+        </div>
+
+        {/* Weather Widget */}
+        <div className="mb-8">
+          <WeatherWidget
+            latitude={52.3676}
+            longitude={4.9041}
+            title="Amsterdam Weather"
+            showForecast={true}
+            compact={false}
+          />
         </div>
 
         {/* Activities Overview */}

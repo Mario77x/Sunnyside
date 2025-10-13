@@ -6,12 +6,14 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useNavigate } from 'react-router-dom';
-import { Send, ArrowLeft, Users, Calendar as CalendarIcon, MapPin, Cloud, Lightbulb, Loader2 } from 'lucide-react';
+import { Send, ArrowLeft, Users, Calendar as CalendarIcon, MapPin, Cloud, Lightbulb, Loader2, Brain } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { format } from 'date-fns';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api';
+import IntentParser from '@/components/IntentParser';
 
 const CreateActivity = () => {
   const navigate = useNavigate();
@@ -146,64 +148,83 @@ const CreateActivity = () => {
 
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         {step === 'chat' && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Lightbulb className="w-5 h-5" style={{ color: '#ff9900' }} />
-                What would you like to organize?
-              </CardTitle>
-              <CardDescription>
-                Tell me about your activity idea and I'll help you plan it. For example: 
-                "Let's grab drinks this weekend with a few friends" or "Planning a family dinner for Sunday"
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <Textarea
-                  placeholder="Describe what you'd like to organize..."
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  className="min-h-[100px]"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleChatSubmit();
-                    }
-                  }}
-                />
-                <Button 
-                  onClick={handleChatSubmit}
-                  disabled={!chatInput.trim()}
-                  className="w-full"
-                  style={{ backgroundColor: '#1155cc', color: 'white' }}
-                >
-                  Next
-                </Button>
-              </div>
-
-              {/* Example suggestions */}
-              <div className="mt-6">
-                <p className="text-sm text-gray-600 mb-3">Need inspiration? Try these:</p>
-                <div className="space-y-2">
-                  {[
-                    "Let's have a barbecue this Saturday if the weather is nice",
-                    "Family brunch this Sunday with the kids",
-                    "Movie night with friends this weekend"
-                  ].map((suggestion, index) => (
+          <Tabs defaultValue="create" className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="create" className="flex items-center gap-2">
+                <Lightbulb className="w-4 h-4" />
+                Create Activity
+              </TabsTrigger>
+              <TabsTrigger value="parser" className="flex items-center gap-2">
+                <Brain className="w-4 h-4" />
+                Test Intent Parser
+              </TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="create" className="mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Lightbulb className="w-5 h-5" style={{ color: '#ff9900' }} />
+                    What would you like to organize?
+                  </CardTitle>
+                  <CardDescription>
+                    Tell me about your activity idea and I'll help you plan it. For example:
+                    "Let's grab drinks this weekend with a few friends" or "Planning a family dinner for Sunday"
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <Textarea
+                      placeholder="Describe what you'd like to organize..."
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      className="min-h-[100px]"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleChatSubmit();
+                        }
+                      }}
+                    />
                     <Button
-                      key={index}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setChatInput(suggestion)}
-                      className="text-left justify-start w-full h-auto p-3 text-wrap"
+                      onClick={handleChatSubmit}
+                      disabled={!chatInput.trim()}
+                      className="w-full"
+                      style={{ backgroundColor: '#1155cc', color: 'white' }}
                     >
-                      {suggestion}
+                      Next
                     </Button>
-                  ))}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+                  </div>
+
+                  {/* Example suggestions */}
+                  <div className="mt-6">
+                    <p className="text-sm text-gray-600 mb-3">Need inspiration? Try these:</p>
+                    <div className="space-y-2">
+                      {[
+                        "Let's have a barbecue this Saturday if the weather is nice",
+                        "Family brunch this Sunday with the kids",
+                        "Movie night with friends this weekend"
+                      ].map((suggestion, index) => (
+                        <Button
+                          key={index}
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setChatInput(suggestion)}
+                          className="text-left justify-start w-full h-auto p-3 text-wrap"
+                        >
+                          {suggestion}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+            
+            <TabsContent value="parser" className="mt-6">
+              <IntentParser />
+            </TabsContent>
+          </Tabs>
         )}
 
         {step === 'review' && parsedIntent && (

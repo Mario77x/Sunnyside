@@ -9,3 +9,4 @@ python-multipart==0.0.6
 python-dotenv==1.0.0
 email-validator==2.1.0
 httpx==0.25.2
+mistralai==1.0.1

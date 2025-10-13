@@ -1,6 +1,26 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { apiService, User, AuthTokens } from '@/services/api';
 
+// Test user for development when backend is offline
+const TEST_USER: User = {
+  id: "test-user-123",
+  name: "Test User",
+  email: "test@example.com",
+  location: "New York",
+  preferences: {
+    indoor: true,
+    outdoor: true,
+    food: true,
+    sports: false,
+    culture: true,
+    nightlife: false,
+    family: true,
+    adventure: false
+  },
+  communication_channel: "email",
+  created_at: new Date().toISOString()
+};
+
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
@@ -52,10 +72,36 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           } else {
             // Token is invalid, remove it
             localStorage.removeItem('sunnyside_token');
+            // In development, if backend is offline, use test user
+            if (process.env.NODE_ENV === 'development') {
+              console.log('🧪 Backend offline - using test user for development');
+              setUser(TEST_USER);
+              localStorage.setItem('sunnyside_token', 'test-token-123');
+            }
           }
         } catch (error) {
           console.error('Failed to initialize auth:', error);
           localStorage.removeItem('sunnyside_token');
+          // In development, if backend is offline, use test user
+          if (process.env.NODE_ENV === 'development') {
+            console.log('🧪 Backend offline - using test user for development');
+            setUser(TEST_USER);
+            localStorage.setItem('sunnyside_token', 'test-token-123');
+          }
+        }
+      } else if (process.env.NODE_ENV === 'development') {
+        // In development, if no token exists, check if we should use test user
+        try {
+          const healthResponse = await apiService.healthCheck();
+          if (!healthResponse.data) {
+            console.log('🧪 Backend offline - using test user for development');
+            setUser(TEST_USER);
+            localStorage.setItem('sunnyside_token', 'test-token-123');
+          }
+        } catch (error) {
+          console.log('🧪 Backend offline - using test user for development');
+          setUser(TEST_USER);
+          localStorage.setItem('sunnyside_token', 'test-token-123');
         }
       }
       setIsLoading(false);

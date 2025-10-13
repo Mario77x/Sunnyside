@@ -53,6 +53,51 @@ export interface Invitee {
   preferences?: Record<string, any>;
 }
 
+export interface WeatherLocation {
+  name: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface CurrentWeather {
+  temperature: number;
+  humidity: number;
+  wind_speed: number;
+  wind_direction: number;
+  weather_code: number;
+  weather_description: string;
+  visibility: number;
+  pressure: number;
+  timestamp: string;
+}
+
+export interface WeatherForecast {
+  date: string;
+  temperature_max: number;
+  temperature_min: number;
+  weather_code: number;
+  weather_description: string;
+  precipitation_probability: number;
+  precipitation_sum: number;
+  wind_speed_max: number;
+  wind_direction: number;
+}
+
+export interface CurrentWeatherResponse {
+  location: WeatherLocation;
+  current: CurrentWeather;
+  updated_at: string;
+  source: string;
+}
+
+export interface WeatherForecastResponse {
+  location: WeatherLocation;
+  forecasts: WeatherForecast[];
+  updated_at: string;
+  source: string;
+}
+
 export interface AuthTokens {
   access_token: string;
   token_type: string;
@@ -225,6 +270,40 @@ class ApiService {
     });
     
     return this.handleResponse(response);
+  }
+
+  // Weather endpoints
+  async getCurrentWeather(latitude: number, longitude: number): Promise<ApiResponse<CurrentWeatherResponse>> {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/weather/current?latitude=${latitude}&longitude=${longitude}`,
+      {
+        headers: this.getAuthHeaders()
+      }
+    );
+    
+    return this.handleResponse<CurrentWeatherResponse>(response);
+  }
+
+  async getWeatherForecast(latitude: number, longitude: number, days: number = 7): Promise<ApiResponse<WeatherForecastResponse>> {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/weather/forecast?latitude=${latitude}&longitude=${longitude}&days=${days}`,
+      {
+        headers: this.getAuthHeaders()
+      }
+    );
+    
+    return this.handleResponse<WeatherForecastResponse>(response);
+  }
+
+  // LLM Intent Parsing endpoint
+  async parseIntent(text: string): Promise<ApiResponse<any>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/llm/parse-intent`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ text })
+    });
+    
+    return this.handleResponse<any>(response);
   }
 
   // Health check

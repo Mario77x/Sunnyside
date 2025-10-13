@@ -90,6 +90,7 @@ from .routes.auth import router as auth_router
 from .routes.activities import router as activities_router
 from .routes.invites import router as invites_router
 from .routes.weather import router as weather_router
+from .routes.llm import router as llm_router
 
 api_v1_router = APIRouter(prefix="/api/v1")
 
@@ -106,6 +107,7 @@ api_v1_router.include_router(auth_router)
 api_v1_router.include_router(activities_router)
 api_v1_router.include_router(invites_router)
 api_v1_router.include_router(weather_router)
+api_v1_router.include_router(llm_router)
 app.include_router(api_v1_router)
 
 
