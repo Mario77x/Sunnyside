@@ -86,16 +86,26 @@ def get_database_connection():
 
 # API v1 router
 from fastapi import APIRouter
-from backend.routes.auth import router as auth_router
-from backend.routes.activities import router as activities_router
-from backend.routes.invites import router as invites_router
+from .routes.auth import router as auth_router
+from .routes.activities import router as activities_router
+from .routes.invites import router as invites_router
+from .routes.weather import router as weather_router
 
 api_v1_router = APIRouter(prefix="/api/v1")
+
+# Health check endpoint for API v1
+@api_v1_router.get("/health")
+async def api_v1_health_check():
+    """
+    API v1 health check endpoint that returns a simple status.
+    """
+    return {"status": "ok"}
 
 # Include routers
 api_v1_router.include_router(auth_router)
 api_v1_router.include_router(activities_router)
 api_v1_router.include_router(invites_router)
+api_v1_router.include_router(weather_router)
 app.include_router(api_v1_router)
 
 

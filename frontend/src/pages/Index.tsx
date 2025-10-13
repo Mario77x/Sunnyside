@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Calendar, Users, Cloud, Clock, CheckCircle, Archive, UserCheck, Settings, TestTube, Loader2 } from 'lucide-react';
+import { Plus, Calendar, Users, Cloud, Clock, CheckCircle, Archive, UserCheck, Settings, TestTube, Loader2, Wifi, WifiOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -15,12 +15,33 @@ const Index = () => {
   const { user, isAuthenticated, logout, isLoading: authLoading } = useAuth();
   const [activities, setActivities] = useState<Activity[]>([]);
   const [isLoadingActivities, setIsLoadingActivities] = useState(false);
+  const [backendStatus, setBackendStatus] = useState<{ status: string; db_status: string } | null>(null);
+  const [backendError, setBackendError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Always check backend health on component mount
+    checkBackendHealth();
+    
     if (isAuthenticated && user) {
       loadActivities();
     }
   }, [isAuthenticated, user]);
+
+  const checkBackendHealth = async () => {
+    try {
+      const response = await apiService.healthCheck();
+      if (response.data) {
+        setBackendStatus(response.data);
+        setBackendError(null);
+      } else {
+        setBackendError(response.error || 'Backend health check failed');
+        setBackendStatus(null);
+      }
+    } catch (error) {
+      setBackendError('Unable to connect to backend');
+      setBackendStatus(null);
+    }
+  };
 
   const loadActivities = async () => {
     try {
@@ -202,6 +223,21 @@ const Index = () => {
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-orange-50">
         <div className="container mx-auto px-4 py-16">
           <div className="text-center max-w-4xl mx-auto">
+            {/* Backend Status for Landing Page */}
+            <div className="mb-4 flex justify-center">
+              {backendStatus ? (
+                <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-3 py-1 rounded-full">
+                  <Wifi className="w-4 h-4" />
+                  <span>Backend Status: {backendStatus.status}</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 px-3 py-1 rounded-full">
+                  <WifiOff className="w-4 h-4" />
+                  <span>{backendError || 'Backend offline'}</span>
+                </div>
+              )}
+            </div>
+            
             {/* Logo */}
             <div className="mb-8">
               <h1 className="text-4xl font-bold text-gray-900 mb-2">
@@ -297,12 +333,29 @@ const Index = () => {
       <header className="bg-white shadow-sm border-b">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold">
-              <span style={{ color: '#ff9900' }}>Sunnyside</span>
-            </h1>
             <div className="flex items-center gap-4">
-              <Button 
-                variant="ghost" 
+              <h1 className="text-2xl font-bold">
+                <span style={{ color: '#ff9900' }}>Sunnyside</span>
+              </h1>
+              {/* Backend Status Indicator */}
+              <div className="flex items-center gap-2 text-sm">
+                {backendStatus ? (
+                  <div className="flex items-center gap-1 text-green-600">
+                    <Wifi className="w-4 h-4" />
+                    <span>Backend: {backendStatus.status}</span>
+                    <span className="text-gray-500">| DB: {backendStatus.db_status}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-red-600">
+                    <WifiOff className="w-4 h-4" />
+                    <span>{backendError || 'Backend offline'}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <Button
+                variant="ghost"
                 onClick={() => navigate('/account')}
                 className="text-gray-600 hover:text-gray-900"
               >
