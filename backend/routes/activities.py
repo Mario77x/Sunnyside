@@ -10,7 +10,10 @@ from backend.models.activity import (
     ActivityCreate,
     ActivityResponse,
     ActivityUpdate,
-    ActivityStatus
+    ActivityStatus,
+    InviteGuestsRequest,
+    Invitee,
+    InviteeResponse
 )
 from backend.models.user import UserResponse
 from backend.auth import get_current_user, security
@@ -260,4 +263,104 @@ async def update_activity(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update activity: {str(e)}"
+        )
+
+
+@router.post("/{activity_id}/invite")
+async def invite_guests_to_activity(
+    activity_id: str,
+    invite_request: InviteGuestsRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Send invitations to guests for an activity.
+    
+    Only the organizer can invite guests to the activity.
+    This endpoint adds invitees to the activity document.
+    """
+    try:
+        # Get current user
+        current_user = await get_current_user(credentials, db)
+        
+        # Validate activity ID
+        if not ObjectId.is_valid(activity_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid activity ID"
+            )
+        
+        # Find activity
+        activity = await db.activities.find_one({"_id": ObjectId(activity_id)})
+        if not activity:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Activity not found"
+            )
+        
+        # Check if user is the organizer
+        if activity["organizer_id"] != ObjectId(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the organizer can invite guests to this activity"
+            )
+        
+        # Prepare invitees list
+        new_invitees = []
+        existing_emails = {invitee.get("email") for invitee in activity.get("invitees", [])}
+        
+        for invitee_data in invite_request.invitees:
+            email = invitee_data.get("email")
+            name = invitee_data.get("name")
+            
+            if not email or not name:
+                continue  # Skip invalid invitee data
+            
+            # Skip if already invited
+            if email in existing_emails:
+                continue
+            
+            # Check if this email belongs to a registered user
+            existing_user = await db.users.find_one({"email": email})
+            invitee_id = str(existing_user["_id"]) if existing_user else str(ObjectId())
+            
+            # Create invitee object
+            invitee = Invitee(
+                id=invitee_id,
+                name=name,
+                email=email,
+                response=InviteeResponse.PENDING,
+                availability_note=None,
+                venue_suggestion=None
+            )
+            
+            new_invitees.append(invitee.model_dump())
+        
+        if not new_invitees:
+            return {"message": "No new invitees to add"}
+        
+        # Add new invitees to the activity
+        await db.activities.update_one(
+            {"_id": ObjectId(activity_id)},
+            {
+                "$push": {"invitees": {"$each": new_invitees}},
+                "$set": {
+                    "updated_at": datetime.utcnow(),
+                    "status": ActivityStatus.INVITATIONS_SENT
+                }
+            }
+        )
+        
+        return {
+            "message": "Invitations sent",
+            "invited_count": len(new_invitees),
+            "custom_message": invite_request.custom_message
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send invitations: {str(e)}"
         )

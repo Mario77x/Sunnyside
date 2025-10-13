@@ -71,14 +71,11 @@ async def update_invitee_response(
     if not invitee_found:
         return False
     
-    # Update the specific invitee's response
+    # Update the specific invitee's response using email match
     update_result = await db.activities.update_one(
         {
             "_id": ObjectId(activity_id),
-            "$or": [
-                {"invitees.email": guest_id},
-                {"invitees.id": ObjectId(guest_id) if ObjectId.is_valid(guest_id) else guest_id}
-            ]
+            "invitees.email": guest_id
         },
         {
             "$set": {
