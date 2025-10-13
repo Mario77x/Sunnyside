@@ -1,9 +1,14 @@
-# Environment variables
+# Environment variables - CRITICAL: Never commit these files!
 .env
+.env.*
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+*/.env
+*/.env.*
+backend/.env
+frontend/.env
 
 # Python
 __pycache__/
@@ -71,6 +76,7 @@ yarn-error.log*
 # Build outputs
 dist/
 build/
+.next/
 
 # Temporary files
 *.tmp
