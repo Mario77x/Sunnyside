@@ -7,9 +7,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useNavigate } from 'react-router-dom';
-import { Send, ArrowLeft, Users, Calendar as CalendarIcon, MapPin, Cloud, Lightbulb } from 'lucide-react';
+import { Send, ArrowLeft, Users, Calendar as CalendarIcon, MapPin, Cloud, Lightbulb, Loader2 } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { format } from 'date-fns';
+import { useAuth } from '@/contexts/AuthContext';
+import { apiService } from '@/services/api';
 
 const CreateActivity = () => {
   const navigate = useNavigate();
@@ -27,16 +29,14 @@ const CreateActivity = () => {
     weatherPreference: '',
     selectedDate: null
   });
-  const [user, setUser] = useState(null);
+  const { user, isAuthenticated } = useAuth();
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    const userData = localStorage.getItem('sunnyside_user');
-    if (userData) {
-      setUser(JSON.parse(userData));
-    } else {
+    if (!isAuthenticated) {
       navigate('/onboarding');
     }
-  }, [navigate]);
+  }, [isAuthenticated, navigate]);
 
   // Mock AI intent parsing
   const parseIntent = (input) => {
@@ -84,31 +84,46 @@ const CreateActivity = () => {
     }, 1000);
   };
 
-  const handleSaveActivity = () => {
+  const handleSaveActivity = async () => {
     // Validate that a date is selected
     if (!selectedDate) {
       showError('Please select a date for your activity');
       return;
     }
 
-    const activities = JSON.parse(localStorage.getItem('sunnyside_activities') || '[]');
-    const newActivity = {
-      ...activityData,
-      selectedDate: selectedDate.toISOString(),
-      id: Date.now(),
-      createdAt: new Date().toISOString(),
-      status: 'planning',
-      organizer: user.id
-    };
-    
-    activities.push(newActivity);
-    localStorage.setItem('sunnyside_activities', JSON.stringify(activities));
-    
-    showSuccess('Activity created successfully!');
-    navigate('/weather-planning', { state: { activity: newActivity } });
+    if (!user) {
+      showError('You must be logged in to create an activity');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      
+      const response = await apiService.createActivity({
+        title: activityData.title,
+        description: activityData.description,
+        timeframe: activityData.timeframe,
+        group_size: activityData.groupSize,
+        activity_type: activityData.activityType,
+        weather_preference: activityData.weatherPreference,
+        selected_date: selectedDate.toISOString(),
+        selected_days: activityData.selectedDate ? [] : undefined
+      });
+
+      if (response.data) {
+        showSuccess('Activity created successfully!');
+        navigate('/weather-planning', { state: { activity: response.data } });
+      } else {
+        showError(response.error || 'Failed to create activity');
+      }
+    } catch (error) {
+      showError('Network error occurred');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  if (!user) return null;
+  if (!isAuthenticated || !user) return null;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -312,13 +327,20 @@ const CreateActivity = () => {
               >
                 Edit Description
               </Button>
-              <Button 
+              <Button
                 onClick={handleSaveActivity}
-                disabled={!selectedDate}
+                disabled={!selectedDate || isLoading}
                 className="flex-1"
                 style={{ backgroundColor: '#1155cc', color: 'white' }}
               >
-                Continue to Weather Planning
+                {isLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  'Continue to Weather Planning'
+                )}
               </Button>
             </div>
           </div>

@@ -6,7 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, MapPin, User, Heart } from 'lucide-react';
+import { ArrowRight, MapPin, User, Heart, Loader2 } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { showError, showSuccess } from '@/utils/toast';
 
 const Onboarding = () => {
   const navigate = useNavigate();
@@ -14,6 +16,7 @@ const Onboarding = () => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    password: '',
     location: '',
     preferences: {
       indoor: false,
@@ -27,19 +30,32 @@ const Onboarding = () => {
     },
     communicationChannel: 'email'
   });
+  const { signup, isLoading } = useAuth();
 
-  const handleNext = () => {
-    if (step < 3) {
+  const handleNext = async () => {
+    if (step < 4) {
       setStep(step + 1);
     } else {
-      // Save user data and redirect
-      const userData = {
-        ...formData,
-        id: Date.now(),
-        createdAt: new Date().toISOString()
-      };
-      localStorage.setItem('sunnyside_user', JSON.stringify(userData));
-      navigate('/');
+      // Submit signup data to backend
+      try {
+        const result = await signup({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password,
+          location: formData.location,
+          preferences: formData.preferences,
+          communication_channel: formData.communicationChannel
+        });
+
+        if (result.success) {
+          showSuccess('Account created successfully!');
+          navigate('/');
+        } else {
+          showError(result.error || 'Failed to create account');
+        }
+      } catch (error) {
+        showError('Network error occurred');
+      }
     }
   };
 
@@ -56,11 +72,13 @@ const Onboarding = () => {
   const isStepValid = () => {
     switch (step) {
       case 1:
-        return formData.name.trim() && formData.email.trim();
+        return formData.name.trim() && formData.email.trim() && formData.password.trim().length >= 6;
       case 2:
         return formData.location.trim();
       case 3:
         return Object.values(formData.preferences).some(Boolean);
+      case 4:
+        return true; // Review step
       default:
         return false;
     }
@@ -79,7 +97,7 @@ const Onboarding = () => {
 
         {/* Progress Indicator */}
         <div className="flex items-center justify-center mb-8">
-          {[1, 2, 3].map((stepNumber) => (
+          {[1, 2, 3, 4].map((stepNumber) => (
             <React.Fragment key={stepNumber}>
               <div 
                 className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
@@ -91,7 +109,7 @@ const Onboarding = () => {
               >
                 {stepNumber}
               </div>
-              {stepNumber < 3 && (
+              {stepNumber < 4 && (
                 <div 
                   className={`w-8 h-1 mx-2 ${
                     stepNumber < step ? 'bg-blue-500' : 'bg-gray-200'
@@ -109,11 +127,13 @@ const Onboarding = () => {
               {step === 1 && <><User className="w-5 h-5" /> Basic Info</>}
               {step === 2 && <><MapPin className="w-5 h-5" /> Location</>}
               {step === 3 && <><Heart className="w-5 h-5" /> Preferences</>}
+              {step === 4 && <><User className="w-5 h-5" /> Review & Create</>}
             </CardTitle>
             <CardDescription>
               {step === 1 && "Tell us about yourself"}
               {step === 2 && "Where are you based?"}
               {step === 3 && "What activities do you enjoy?"}
+              {step === 4 && "Review your information and create your account"}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -137,6 +157,17 @@ const Onboarding = () => {
                     value={formData.email}
                     onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="Choose a secure password"
+                    value={formData.password}
+                    onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
+                  />
+                  <p className="text-xs text-gray-500">Password must be at least 6 characters</p>
                 </div>
               </>
             )}
@@ -209,6 +240,27 @@ const Onboarding = () => {
               </div>
             )}
 
+            {step === 4 && (
+              <div className="space-y-4">
+                <div className="p-4 bg-gray-50 rounded-lg space-y-3">
+                  <div><strong>Name:</strong> {formData.name}</div>
+                  <div><strong>Email:</strong> {formData.email}</div>
+                  <div><strong>Location:</strong> {formData.location}</div>
+                  <div><strong>Communication:</strong> {formData.communicationChannel}</div>
+                  <div>
+                    <strong>Preferences:</strong>{' '}
+                    {Object.entries(formData.preferences)
+                      .filter(([_, value]) => value)
+                      .map(([key, _]) => key.charAt(0).toUpperCase() + key.slice(1))
+                      .join(', ')}
+                  </div>
+                </div>
+                <p className="text-sm text-gray-600">
+                  By creating an account, you agree to our terms of service and privacy policy.
+                </p>
+              </div>
+            )}
+
             <div className="flex gap-3 pt-4">
               {step > 1 && (
                 <Button 
@@ -220,14 +272,23 @@ const Onboarding = () => {
                   Back
                 </Button>
               )}
-              <Button 
+              <Button
                 onClick={handleNext}
-                disabled={!isStepValid()}
+                disabled={!isStepValid() || isLoading}
                 className="flex-1"
                 style={{ backgroundColor: '#1155cc', color: 'white' }}
               >
-                {step === 3 ? 'Complete Setup' : 'Next'}
-                <ArrowRight className="w-4 h-4 ml-2" />
+                {isLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Creating Account...
+                  </>
+                ) : (
+                  <>
+                    {step === 4 ? 'Create Account' : 'Next'}
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </>
+                )}
               </Button>
             </div>
           </CardContent>

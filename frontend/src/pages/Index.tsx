@@ -1,109 +1,92 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Calendar, Users, Cloud, Clock, CheckCircle, Archive, UserCheck, Settings, TestTube } from 'lucide-react';
+import { Plus, Calendar, Users, Cloud, Clock, CheckCircle, Archive, UserCheck, Settings, TestTube, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useNavigate } from 'react-router-dom';
-import { showSuccess } from '@/utils/toast';
+import { showSuccess, showError } from '@/utils/toast';
 import { calculateDeadline } from '@/utils/deadlineCalculator';
+import { useAuth } from '@/contexts/AuthContext';
+import { apiService, Activity } from '@/services/api';
 
 const Index = () => {
   const navigate = useNavigate();
-  const [user, setUser] = useState(null);
-  const [activities, setActivities] = useState([]);
+  const { user, isAuthenticated, logout, isLoading: authLoading } = useAuth();
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [isLoadingActivities, setIsLoadingActivities] = useState(false);
 
   useEffect(() => {
-    // Check if user is logged in (mock)
-    const userData = localStorage.getItem('sunnyside_user');
-    if (userData) {
-      setUser(JSON.parse(userData));
-      // Load user's activities (mock)
-      const userActivities = JSON.parse(localStorage.getItem('sunnyside_activities') || '[]');
-      setActivities(userActivities);
+    if (isAuthenticated && user) {
+      loadActivities();
     }
-  }, []);
+  }, [isAuthenticated, user]);
+
+  const loadActivities = async () => {
+    try {
+      setIsLoadingActivities(true);
+      const response = await apiService.getActivities();
+      if (response.data) {
+        setActivities(response.data);
+      } else {
+        showError(response.error || 'Failed to load activities');
+      }
+    } catch (error) {
+      showError('Network error occurred');
+    } finally {
+      setIsLoadingActivities(false);
+    }
+  };
 
   const handleCreateActivity = () => {
-    if (!user) {
+    if (!isAuthenticated) {
       navigate('/onboarding');
     } else {
       navigate('/create-activity');
     }
   };
 
-  const createTestInvite = () => {
+  const createTestInvite = async () => {
     if (!user) return;
 
-    // Find an existing activity or create a mock one
-    const existingActivities = JSON.parse(localStorage.getItem('sunnyside_activities') || '[]');
-    let sourceActivity = existingActivities.find(act => act.organizer === user.id);
-
-    // If no existing activity, create a mock one
-    if (!sourceActivity) {
-      sourceActivity = {
+    try {
+      // Create a test activity first
+      const testActivityData = {
         title: "Weekend Brunch",
         description: "Let's have a nice brunch this Sunday with good food and great company!",
         timeframe: "Sunday morning",
-        groupSize: "small group",
-        activityType: "food",
-        weatherPreference: "either",
-        selectedDays: ["Sunday"],
-        weatherData: [
-          { day: "Sunday", temperature: 22, condition: "sunny", suitability: "excellent" },
-          { day: "Monday", temperature: 18, condition: "cloudy", suitability: "good" }
-        ]
+        group_size: "small group",
+        activity_type: "food",
+        weather_preference: "either",
+        selected_days: ["Sunday"]
       };
+
+      const response = await apiService.createActivity(testActivityData);
+      if (response.data) {
+        // Invite the current user as a test
+        await apiService.inviteGuests(response.data.id, {
+          invitees: [
+            { name: user.name, email: user.email },
+            { name: "Mike Chen", email: "mike@example.com" },
+            { name: "Emma Wilson", email: "emma@example.com" }
+          ],
+          custom_message: `Hi ${user.name}! I'm organizing ${testActivityData.title.toLowerCase()} and would love for you to join us. It's going to be a great time! Let me know if you're interested.`
+        });
+
+        // Reload activities
+        await loadActivities();
+        showSuccess('Test invitation created! Check your activities.');
+      } else {
+        showError(response.error || 'Failed to create test invite');
+      }
+    } catch (error) {
+      showError('Network error occurred');
     }
-
-    // Create test invite where current user is invitee
-    const testInvite = {
-      ...sourceActivity,
-      id: Date.now() + 1000, // Different ID
-      organizer: 999999, // Mock organizer ID
-      organizerName: "Sarah Johnson", // Mock organizer name
-      status: 'invitations-sent',
-      deadline: calculateDeadline({ 
-        activityDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000) // 2 days from now
-      }).toISOString(),
-      invitees: [
-        {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          response: 'pending'
-        },
-        {
-          id: 888888,
-          name: "Mike Chen",
-          email: "mike@example.com",
-          response: 'yes'
-        },
-        {
-          id: 777777,
-          name: "Emma Wilson",
-          email: "emma@example.com",
-          response: 'maybe'
-        }
-      ],
-      customMessage: `Hi ${user.name}! I'm organizing ${sourceActivity.title.toLowerCase()} and would love for you to join us. It's going to be a great time! Let me know if you're interested.`,
-      createdAt: new Date().toISOString(),
-      sentAt: new Date().toISOString()
-    };
-
-    // Add to activities
-    const updatedActivities = [...existingActivities, testInvite];
-    localStorage.setItem('sunnyside_activities', JSON.stringify(updatedActivities));
-    
-    // Refresh activities state
-    setActivities(updatedActivities);
-    
-    showSuccess('Test invitation created! Check your "Invited" tab.');
   };
 
-  const handleSelectActivity = (activity) => {
+  const handleSelectActivity = (activity: Activity) => {
     // Navigate based on activity status and user role
-    if (activity.organizer === user.id) {
+    if (activity.organizer_id === user?.id) {
       // Organizer flow
       if (activity.status === 'planning') {
         navigate('/weather-planning', { state: { activity } });
@@ -126,10 +109,10 @@ const Index = () => {
     const invited = { current: [], past: [] };
 
     activities.forEach(activity => {
-      const activityDate = activity.selectedDate ? new Date(activity.selectedDate) : null;
+      const activityDate = activity.selected_date ? new Date(activity.selected_date) : null;
       const isPast = activityDate ? activityDate < now : false;
       
-      if (activity.organizer === user.id) {
+      if (activity.organizer_id === user?.id) {
         // Activities organized by this user
         if (isPast) {
           organized.past.push(activity);
@@ -149,7 +132,7 @@ const Index = () => {
     return { organized, invited };
   };
 
-  const getStatusBadge = (activity) => {
+  const getStatusBadge = (activity: Activity) => {
     switch (activity.status) {
       case 'planning': return <Badge variant="outline">Draft</Badge>;
       case 'invitations-sent': return <Badge variant="secondary">Invites Sent</Badge>;
@@ -162,7 +145,11 @@ const Index = () => {
     }
   };
 
-  const ActivityCard = ({ activity, showStatus = true, isOrganizer = false }) => (
+  const ActivityCard = ({ activity, showStatus = true, isOrganizer = false }: {
+    activity: Activity;
+    showStatus?: boolean;
+    isOrganizer?: boolean;
+  }) => (
     <div 
       className="p-4 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
       onClick={() => handleSelectActivity(activity)}
@@ -173,16 +160,16 @@ const Index = () => {
       </div>
       <p className="text-gray-600 text-sm mb-3">{activity.description}</p>
       <div className="flex items-center gap-4 text-sm text-gray-500">
-        {activity.selectedDate && (
+        {activity.selected_date && (
           <span className="flex items-center gap-1">
             <Calendar className="w-3 h-3" />
-            {new Date(activity.selectedDate).toLocaleDateString()}
+            {new Date(activity.selected_date).toLocaleDateString()}
           </span>
         )}
-        {activity.selectedDays && activity.selectedDays.length > 0 && (
+        {activity.selected_days && activity.selected_days.length > 0 && (
           <span className="flex items-center gap-1">
             <Clock className="w-3 h-3" />
-            {activity.selectedDays.join(', ')}
+            {activity.selected_days.join(', ')}
           </span>
         )}
         <span className="flex items-center gap-1">
@@ -192,14 +179,25 @@ const Index = () => {
         {!isOrganizer && (
           <span className="flex items-center gap-1">
             <UserCheck className="w-3 h-3" />
-            Invited by {activity.organizerName || 'Someone'}
+            Invited by Someone
           </span>
         )}
       </div>
     </div>
   );
 
-  if (!user) {
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-orange-50">
         <div className="container mx-auto px-4 py-16">
@@ -222,8 +220,16 @@ const Index = () => {
                 weather intelligence, and seamless coordination - all in one place.
               </p>
               
-              <div className="flex justify-center">
-                <Button 
+              <div className="flex justify-center gap-4">
+                <Button
+                  onClick={() => navigate('/login')}
+                  variant="outline"
+                  className="px-8 py-3 text-lg"
+                  style={{ borderColor: '#1155cc', color: '#1155cc' }}
+                >
+                  Sign In
+                </Button>
+                <Button
                   onClick={() => navigate('/onboarding')}
                   className="px-8 py-3 text-lg"
                   style={{ backgroundColor: '#1155cc', color: 'white' }}
@@ -302,12 +308,9 @@ const Index = () => {
               >
                 Hello, {user.name}
               </Button>
-              <Button 
-                variant="ghost" 
-                onClick={() => {
-                  localStorage.removeItem('sunnyside_user');
-                  setUser(null);
-                }}
+              <Button
+                variant="ghost"
+                onClick={logout}
                 className="text-gray-600"
               >
                 Sign Out
@@ -379,11 +382,16 @@ const Index = () => {
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {organized.current.length === 0 ? (
+                    {isLoadingActivities ? (
+                      <div className="text-center py-8">
+                        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
+                        <p className="text-gray-500">Loading activities...</p>
+                      </div>
+                    ) : organized.current.length === 0 ? (
                       <div className="text-center py-8">
                         <Settings className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                         <p className="text-gray-500 mb-4">No current organized activities</p>
-                        <Button 
+                        <Button
                           onClick={handleCreateActivity}
                           style={{ backgroundColor: '#1155cc', color: 'white' }}
                         >

@@ -3,7 +3,9 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "@/contexts/AuthContext";
 import Index from "./pages/Index";
+import Login from "./pages/Login";
 import Onboarding from "./pages/Onboarding";
 import CreateActivity from "./pages/CreateActivity";
 import WeatherPlanning from "./pages/WeatherPlanning";
@@ -22,29 +24,32 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/onboarding" element={<Onboarding />} />
-          <Route path="/create-activity" element={<CreateActivity />} />
-          <Route path="/weather-planning" element={<WeatherPlanning />} />
-          <Route path="/activity-recommendations" element={<ActivityRecommendations />} />
-          <Route path="/invite-guests" element={<InviteGuests />} />
-          <Route path="/guest" element={<GuestResponse />} />
-          <Route path="/invitee-response" element={<InviteeResponse />} />
-          <Route path="/response-review" element={<ResponseReview />} />
-          <Route path="/venue-poll" element={<VenuePoll />} />
-          <Route path="/post-activity-feedback" element={<PostActivityFeedback />} />
-          <Route path="/account" element={<Account />} />
-          <Route path="/activity-summary" element={<ActivitySummary />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
+    <AuthProvider>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<Index />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/onboarding" element={<Onboarding />} />
+            <Route path="/create-activity" element={<CreateActivity />} />
+            <Route path="/weather-planning" element={<WeatherPlanning />} />
+            <Route path="/activity-recommendations" element={<ActivityRecommendations />} />
+            <Route path="/invite-guests" element={<InviteGuests />} />
+            <Route path="/guest" element={<GuestResponse />} />
+            <Route path="/invitee-response" element={<InviteeResponse />} />
+            <Route path="/response-review" element={<ResponseReview />} />
+            <Route path="/venue-poll" element={<VenuePoll />} />
+            <Route path="/post-activity-feedback" element={<PostActivityFeedback />} />
+            <Route path="/account" element={<Account />} />
+            <Route path="/activity-summary" element={<ActivitySummary />} />
+            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </AuthProvider>
   </QueryClientProvider>
 );
 

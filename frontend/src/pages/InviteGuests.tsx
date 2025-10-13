@@ -5,50 +5,55 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Plus, Users, Mail, MessageSquare, X, Send, MapPin, Star } from 'lucide-react';
-import { showSuccess } from '@/utils/toast';
+import { ArrowLeft, Plus, Users, Mail, MessageSquare, X, Send, MapPin, Star, Loader2 } from 'lucide-react';
+import { showSuccess, showError } from '@/utils/toast';
+import { useAuth } from '@/contexts/AuthContext';
+import { apiService, Activity } from '@/services/api';
 
 const InviteGuests = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [activity, setActivity] = useState(null);
-  const [invitees, setInvitees] = useState([]);
+  const { user, isAuthenticated } = useAuth();
+  const [activity, setActivity] = useState<Activity | null>(null);
+  const [invitees, setInvitees] = useState<Array<{ id: number; name: string; email: string; phone?: string }>>([]);
   const [newInvitee, setNewInvitee] = useState({ name: '', email: '', phone: '' });
   const [customMessage, setCustomMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      navigate('/onboarding');
+      return;
+    }
+
     if (location.state?.activity) {
       setActivity(location.state.activity);
       
       // Determine the date text to use in the message
       let dateText = 'flexible dates';
       
-      if (location.state.activity.selectedDate) {
+      if (location.state.activity.selected_date) {
         // If there's a specific selected date, use that
-        const selectedDate = new Date(location.state.activity.selectedDate);
-        dateText = selectedDate.toLocaleDateString('en-US', { 
-          weekday: 'long', 
-          year: 'numeric', 
-          month: 'long', 
-          day: 'numeric' 
+        const selectedDate = new Date(location.state.activity.selected_date);
+        dateText = selectedDate.toLocaleDateString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
         });
-      } else if (location.state.activity.selectedDays && location.state.activity.selectedDays.length > 0) {
+      } else if (location.state.activity.selected_days && location.state.activity.selected_days.length > 0) {
         // Otherwise use the selected days from weather planning
-        const capitalizedDays = location.state.activity.selectedDays.map(day => 
+        const capitalizedDays = location.state.activity.selected_days.map((day: string) =>
           day.charAt(0).toUpperCase() + day.slice(1).toLowerCase()
         ).join(', ');
         dateText = capitalizedDays;
       }
       
-      const venueInfo = location.state.activity.selectedVenue 
-        ? ` at ${location.state.activity.selectedVenue.name}` 
-        : '';
-      
-      setCustomMessage(`Hi! I'm organizing ${location.state.activity.title.toLowerCase()}${venueInfo} and would love for you to join. We're looking at ${dateText}. Let me know if you're interested!`);
+      setCustomMessage(`Hi! I'm organizing ${location.state.activity.title.toLowerCase()} and would love for you to join. We're looking at ${dateText}. Let me know if you're interested!`);
     } else {
       navigate('/');
     }
-  }, [location, navigate]);
+  }, [location, navigate, isAuthenticated]);
 
   const addInvitee = () => {
     if (newInvitee.name && (newInvitee.email || newInvitee.phone)) {
@@ -61,41 +66,50 @@ const InviteGuests = () => {
     setInvitees(prev => prev.filter(inv => inv.id !== id));
   };
 
-  const handleSendInvitations = () => {
-    // Mock sending invitations
-    const updatedActivity = {
-      ...activity,
-      invitees,
-      customMessage,
-      invitationsSent: true,
-      sentAt: new Date().toISOString(),
-      status: 'invitations-sent'
-    };
+  const handleSendInvitations = async () => {
+    if (!activity || invitees.length === 0) return;
 
-    // Update activity in storage
-    const activities = JSON.parse(localStorage.getItem('sunnyside_activities') || '[]');
-    const updatedActivities = activities.map(act => 
-      act.id === activity.id ? updatedActivity : act
-    );
-    localStorage.setItem('sunnyside_activities', JSON.stringify(updatedActivities));
+    try {
+      setIsLoading(true);
+      
+      const response = await apiService.inviteGuests(activity.id, {
+        invitees: invitees.map(inv => ({ name: inv.name, email: inv.email })),
+        custom_message: customMessage
+      });
 
-    showSuccess(`Invitations sent to ${invitees.length} people!`);
-    navigate('/activity-summary', { state: { activity: updatedActivity } });
+      if (response.data) {
+        showSuccess(`Invitations sent to ${response.data.invited_count} people!`);
+        
+        // Fetch updated activity
+        const updatedActivityResponse = await apiService.getActivity(activity.id);
+        if (updatedActivityResponse.data) {
+          navigate('/activity-summary', { state: { activity: updatedActivityResponse.data } });
+        } else {
+          navigate('/');
+        }
+      } else {
+        showError(response.error || 'Failed to send invitations');
+      }
+    } catch (error) {
+      showError('Network error occurred');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   if (!activity) return null;
 
   // Display text for the card description
   const getDisplayDateText = () => {
-    if (activity.selectedDate) {
-      return new Date(activity.selectedDate).toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
+    if (activity?.selected_date) {
+      return new Date(activity.selected_date).toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
       });
-    } else if (activity.selectedDays && activity.selectedDays.length > 0) {
-      return activity.selectedDays.map(day => 
+    } else if (activity?.selected_days && activity.selected_days.length > 0) {
+      return activity.selected_days.map((day: string) =>
         day.charAt(0).toUpperCase() + day.slice(1).toLowerCase()
       ).join(', ');
     }
@@ -125,31 +139,11 @@ const InviteGuests = () => {
         {/* Activity Summary */}
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>{activity.title}</CardTitle>
+            <CardTitle>{activity?.title}</CardTitle>
             <CardDescription>
               Selected date: {getDisplayDateText()}
             </CardDescription>
           </CardHeader>
-          {activity.selectedVenue && (
-            <CardContent>
-              <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-                <div className="flex-1">
-                  <h4 className="font-medium">{activity.selectedVenue.name}</h4>
-                  <p className="text-sm text-gray-600 mb-1">{activity.selectedVenue.description}</p>
-                  <div className="flex items-center gap-2 text-sm text-gray-500">
-                    <MapPin className="w-3 h-3" />
-                    <span>{activity.selectedVenue.address}</span>
-                  </div>
-                </div>
-                {activity.selectedVenue.rating && (
-                  <div className="flex items-center gap-1">
-                    <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                    <span className="text-sm">{activity.selectedVenue.rating}</span>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          )}
         </Card>
 
         {/* Add Invitees */}
@@ -262,14 +256,11 @@ const InviteGuests = () => {
             </CardHeader>
             <CardContent className="bg-gray-50 p-4 rounded-lg">
               <div className="space-y-3">
-                <div className="font-semibold text-lg">{activity.title}</div>
+                <div className="font-semibold text-lg">{activity?.title}</div>
                 <div className="text-gray-600">{customMessage}</div>
                 <div className="space-y-2">
                   <div><strong>Date:</strong> {getDisplayDateText()}</div>
-                  <div><strong>Activity type:</strong> {activity.weatherPreference}</div>
-                  {activity.selectedVenue && (
-                    <div><strong>Venue:</strong> {activity.selectedVenue.name}</div>
-                  )}
+                  <div><strong>Activity type:</strong> {activity?.weather_preference}</div>
                 </div>
                 <div className="pt-3 border-t">
                   <Badge variant="outline">Click here to respond</Badge>
@@ -289,14 +280,23 @@ const InviteGuests = () => {
           >
             Back to Recommendations
           </Button>
-          <Button 
+          <Button
             onClick={handleSendInvitations}
-            disabled={invitees.length === 0}
+            disabled={invitees.length === 0 || isLoading}
             className="flex-1"
             style={{ backgroundColor: '#1155cc', color: 'white' }}
           >
-            <Send className="w-4 h-4 mr-2" />
-            Send Invitations
+            {isLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Sending...
+              </>
+            ) : (
+              <>
+                <Send className="w-4 h-4 mr-2" />
+                Send Invitations
+              </>
+            )}
           </Button>
         </div>
       </div>

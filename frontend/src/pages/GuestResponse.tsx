@@ -7,16 +7,20 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Calendar, Cloud, Users, Check, X, Clock, Download, Heart, MapPin } from 'lucide-react';
-import { showSuccess } from '@/utils/toast';
+import { Calendar, Cloud, Users, Check, X, Clock, Download, Heart, MapPin, Loader2 } from 'lucide-react';
+import { showSuccess, showError } from '@/utils/toast';
+import { apiService } from '@/services/api';
 
 const GuestResponse = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [activity, setActivity] = useState(null);
+  const [activity, setActivity] = useState<any>(null);
   const [response, setResponse] = useState('');
   const [availabilityNote, setAvailabilityNote] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [guestEmail, setGuestEmail] = useState('');
   const [preferences, setPreferences] = useState({
     indoor: false,
     outdoor: false,
@@ -30,27 +34,38 @@ const GuestResponse = () => {
   const [venueSuggestion, setVenueSuggestion] = useState('');
 
   useEffect(() => {
-    // Mock loading activity from invite link
-    const inviteId = searchParams.get('invite');
-    if (inviteId) {
-      // In real app, this would fetch from backend
-      const mockActivity = {
-        id: inviteId,
-        title: "Weekend Drinks",
-        description: "Let's grab drinks this weekend with a few friends",
-        organizer: "Alex",
-        selectedDays: ["Saturday", "Sunday"],
-        weatherPreference: "either",
-        weatherData: [
-          { day: "Saturday", temperature: 22, condition: "sunny", suitability: "excellent" },
-          { day: "Sunday", temperature: 18, condition: "cloudy", suitability: "good" }
-        ],
-        deadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours from now
-      };
-      setActivity(mockActivity);
-    } else {
-      navigate('/');
-    }
+    const loadActivity = async () => {
+      const activityId = searchParams.get('activity');
+      const email = searchParams.get('email');
+      
+      if (!activityId) {
+        navigate('/');
+        return;
+      }
+
+      if (email) {
+        setGuestEmail(email);
+      }
+
+      try {
+        setIsLoading(true);
+        const response = await apiService.getPublicActivity(activityId);
+        
+        if (response.data) {
+          setActivity(response.data);
+        } else {
+          showError(response.error || 'Activity not found');
+          navigate('/');
+        }
+      } catch (error) {
+        showError('Network error occurred');
+        navigate('/');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadActivity();
   }, [searchParams, navigate]);
 
   const handleResponse = (responseType) => {
@@ -64,22 +79,36 @@ const GuestResponse = () => {
     }));
   };
 
-  const handleSubmit = () => {
-    // Mock submitting response
-    const guestResponse = {
-      response,
-      availabilityNote,
-      preferences,
-      venueSuggestion,
-      submittedAt: new Date().toISOString(),
-      guestId: Date.now()
-    };
+  const handleSubmit = async () => {
+    if (!activity || !response || !guestEmail.trim()) {
+      showError('Please fill in all required fields');
+      return;
+    }
 
-    // In real app, this would be sent to backend
-    console.log('Guest response:', guestResponse);
-    
-    setSubmitted(true);
-    showSuccess('Response submitted successfully!');
+    try {
+      setIsSubmitting(true);
+      
+      const responseData = {
+        guest_id: guestEmail,
+        response: response as 'yes' | 'maybe' | 'no',
+        availability_note: availabilityNote,
+        preferences,
+        venue_suggestion: venueSuggestion
+      };
+
+      const result = await apiService.submitGuestResponse(activity.id, responseData);
+      
+      if (result.data) {
+        setSubmitted(true);
+        showSuccess('Response submitted successfully!');
+      } else {
+        showError(result.error || 'Failed to submit response');
+      }
+    } catch (error) {
+      showError('Network error occurred');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const downloadCalendarEvent = () => {
@@ -108,7 +137,7 @@ END:VCALENDAR`;
     if (!activity.deadline) return '';
     const deadline = new Date(activity.deadline);
     const now = new Date();
-    const hoursLeft = Math.ceil((deadline - now) / (1000 * 60 * 60));
+    const hoursLeft = Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60));
     
     if (hoursLeft <= 0) return 'Deadline passed';
     if (hoursLeft === 1) return '1 hour left';
@@ -116,6 +145,17 @@ END:VCALENDAR`;
     const daysLeft = Math.ceil(hoursLeft / 24);
     return `${daysLeft} day${daysLeft > 1 ? 's' : ''} left`;
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-orange-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">Loading activity...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!activity) return null;
 
@@ -129,7 +169,7 @@ END:VCALENDAR`;
             </div>
             <CardTitle>Response Submitted!</CardTitle>
             <CardDescription>
-              Thanks for responding to {activity.organizer}'s invitation.
+              Thanks for responding to {activity.organizer_name}'s invitation.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -198,7 +238,7 @@ END:VCALENDAR`;
               {activity.title}
             </CardTitle>
             <CardDescription>
-              Organized by {activity.organizer}
+              Organized by {activity.organizer_name}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -211,9 +251,9 @@ END:VCALENDAR`;
                   Possible Dates
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {activity.selectedDays.map(day => (
+                  {activity.selected_days?.map((day: string) => (
                     <Badge key={day} variant="outline">{day}</Badge>
-                  ))}
+                  )) || <Badge variant="outline">No specific days</Badge>}
                 </div>
               </div>
               
@@ -222,49 +262,47 @@ END:VCALENDAR`;
                   <Cloud className="w-4 h-4" />
                   Weather Preference
                 </div>
-                <Badge variant="outline">{activity.weatherPreference}</Badge>
+                <Badge variant="outline">{activity.weather_preference}</Badge>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Weather Forecast */}
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Weather Forecast</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {activity.weatherData.map((day, index) => (
-                <div key={index} className="p-3 border rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium">{day.day}</span>
-                    <span className="text-lg">{day.temperature}°C</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-600 capitalize">{day.condition}</span>
-                    <Badge 
-                      className={
-                        day.suitability === 'excellent' ? 'bg-green-100 text-green-800' :
-                        day.suitability === 'good' ? 'bg-blue-100 text-blue-800' :
-                        'bg-yellow-100 text-yellow-800'
-                      }
-                    >
-                      {day.suitability}
-                    </Badge>
-                  </div>
+        {/* Activity Details */}
+        {activity.selected_date && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Activity Date</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="p-3 border rounded-lg">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4" />
+                  <span className="font-medium">
+                    {new Date(activity.selected_date).toLocaleDateString('en-US', {
+                      weekday: 'long',
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric'
+                    })}
+                  </span>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                {activity.timeframe && (
+                  <div className="mt-2 text-sm text-gray-600">
+                    Time: {activity.timeframe}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Response Options */}
         <Card className="mb-6">
           <CardHeader>
             <CardTitle>Your Response</CardTitle>
             <CardDescription>
-              Let {activity.organizer} know if you can join
+              Let {activity.organizer_name} know if you can join
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -300,6 +338,17 @@ END:VCALENDAR`;
 
             {response && (
               <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="guest-email">Your Email (Required)</Label>
+                  <Input
+                    id="guest-email"
+                    type="email"
+                    placeholder="your@email.com"
+                    value={guestEmail}
+                    onChange={(e) => setGuestEmail(e.target.value)}
+                    required
+                  />
+                </div>
                 <Textarea
                   placeholder="Add a note about your availability (optional)"
                   value={availabilityNote}
@@ -365,12 +414,20 @@ END:VCALENDAR`;
         {response && (
           <Card className="mb-6">
             <CardContent className="pt-6">
-              <Button 
+              <Button
                 onClick={handleSubmit}
+                disabled={!guestEmail.trim() || isSubmitting}
                 className="w-full"
                 style={{ backgroundColor: '#1155cc', color: 'white' }}
               >
-                Submit Response
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  'Submit Response'
+                )}
               </Button>
             </CardContent>
           </Card>

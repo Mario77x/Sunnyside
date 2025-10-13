@@ -9,8 +9,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # MongoDB connection
-MONGODB_URI = os.getenv("MONGODB_URI", "mongodb+srv://sunnyside_db_user:GCWkLShMGwJtwNTD@cluster0.rskmhym.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
-DATABASE_NAME = "sunnyside"
+MONGODB_URI = os.getenv("MONGODB_URI")
+DATABASE_NAME = os.getenv("DATABASE_NAME", "sunnyside")
+
+# Validate required environment variables
+if not MONGODB_URI:
+    raise ValueError("MONGODB_URI environment variable is required but not set")
 
 # Global variables for database connection
 mongodb_client: AsyncIOMotorClient = None
