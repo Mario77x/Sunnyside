@@ -14,6 +14,7 @@ import { format } from 'date-fns';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api';
 import IntentParser from '@/components/IntentParser';
+import RecommendationGenerator from '@/components/RecommendationGenerator';
 
 const CreateActivity = () => {
   const navigate = useNavigate();
@@ -66,11 +67,59 @@ const CreateActivity = () => {
     };
   };
 
-  const handleChatSubmit = () => {
+  const handleChatSubmit = async () => {
     if (!chatInput.trim()) return;
 
-    // Mock AI processing
-    setTimeout(() => {
+    setIsLoading(true);
+    try {
+      const response = await apiService.parseIntent(chatInput.trim());
+      
+      if (response.data && response.data.success) {
+        const intentData = response.data.data;
+        
+        // Extract relevant information from the parsed intent
+        const parsed = {
+          title: intentData.activity?.specific_activity ||
+                 intentData.activity?.description ||
+                 'New Activity',
+          description: chatInput,
+          timeframe: intentData.datetime?.relative_time ||
+                    intentData.datetime?.time ||
+                    'flexible',
+          groupSize: intentData.participants?.count ||
+                    (intentData.participants?.type === 'group' ? 'medium' : 'small'),
+          activityType: intentData.activity?.type || 'social',
+          weatherPreference: intentData.location?.indoor_outdoor || 'either'
+        };
+
+        setParsedIntent(parsed);
+        setActivityData(prev => ({
+          ...prev,
+          title: parsed.title,
+          description: parsed.description,
+          timeframe: parsed.timeframe,
+          groupSize: parsed.groupSize,
+          activityType: parsed.activityType,
+          weatherPreference: parsed.weatherPreference
+        }));
+        setStep('review');
+      } else {
+        // Fallback to mock parsing if API fails
+        const parsed = parseIntent(chatInput);
+        setParsedIntent(parsed);
+        setActivityData(prev => ({
+          ...prev,
+          title: parsed.title,
+          description: parsed.description,
+          timeframe: parsed.timeframe,
+          groupSize: parsed.groupSize,
+          activityType: parsed.activityType,
+          weatherPreference: parsed.weatherPreference
+        }));
+        setStep('review');
+      }
+    } catch (error) {
+      // Fallback to mock parsing on error
       const parsed = parseIntent(chatInput);
       setParsedIntent(parsed);
       setActivityData(prev => ({
@@ -83,7 +132,9 @@ const CreateActivity = () => {
         weatherPreference: parsed.weatherPreference
       }));
       setStep('review');
-    }, 1000);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleSaveActivity = async () => {
@@ -149,10 +200,14 @@ const CreateActivity = () => {
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         {step === 'chat' && (
           <Tabs defaultValue="create" className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="create" className="flex items-center gap-2">
                 <Lightbulb className="w-4 h-4" />
                 Create Activity
+              </TabsTrigger>
+              <TabsTrigger value="recommendations" className="flex items-center gap-2">
+                <Lightbulb className="w-4 h-4" />
+                Get Ideas
               </TabsTrigger>
               <TabsTrigger value="parser" className="flex items-center gap-2">
                 <Brain className="w-4 h-4" />
@@ -219,6 +274,10 @@ const CreateActivity = () => {
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
+            
+            <TabsContent value="recommendations" className="mt-6">
+              <RecommendationGenerator />
             </TabsContent>
             
             <TabsContent value="parser" className="mt-6">

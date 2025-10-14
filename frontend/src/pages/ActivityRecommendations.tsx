@@ -5,9 +5,10 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, MapPin, Star, ExternalLink, RefreshCw, Edit, Check } from 'lucide-react';
-import { showSuccess } from '@/utils/toast';
+import { ArrowLeft, MapPin, Star, ExternalLink, RefreshCw, Edit, Check, Loader2 } from 'lucide-react';
+import { showSuccess, showError } from '@/utils/toast';
 import ThinkingScreen from '@/components/ThinkingScreen';
+import { apiService } from '@/services/api';
 
 const ActivityRecommendations = () => {
   const navigate = useNavigate();
@@ -224,8 +225,12 @@ const ActivityRecommendations = () => {
                     alt={recommendation.name}
                     className="w-full h-full object-cover rounded-lg"
                     onError={(e) => {
-                      e.target.style.display = 'none';
-                      e.target.nextSibling.style.display = 'flex';
+                      const target = e.target as HTMLImageElement;
+                      const nextSibling = target.nextSibling as HTMLElement;
+                      target.style.display = 'none';
+                      if (nextSibling) {
+                        nextSibling.style.display = 'flex';
+                      }
                     }}
                   />
                   <div className="hidden items-center justify-center text-gray-400">

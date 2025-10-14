@@ -306,6 +306,40 @@ class ApiService {
     return this.handleResponse<any>(response);
   }
 
+  // Recommendation endpoints
+  async getRecommendations(query: string, maxResults: number = 5): Promise<ApiResponse<{
+    success: boolean;
+    recommendations: Array<{
+      title: string;
+      description: string;
+      category: string;
+      duration: string;
+      difficulty: string;
+      budget: string;
+      indoor_outdoor: string;
+      group_size: string;
+      tips: string;
+      venue: {
+        name: string;
+        address: string;
+        link: string;
+        image_url?: string;
+      };
+    }>;
+    query: string;
+    retrieved_activities: number;
+    metadata: Record<string, any>;
+    error?: string;
+  }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/llm/recommendations`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ query, max_results: maxResults })
+    });
+    
+    return this.handleResponse(response);
+  }
+
   // Health check
   async healthCheck(): Promise<ApiResponse<{ status: string; db_status: string }>> {
     const response = await fetch(`${API_BASE_URL}/healthz`);
