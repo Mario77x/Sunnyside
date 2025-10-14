@@ -38,12 +38,17 @@ const Onboarding = () => {
     } else {
       // Submit signup data to backend
       try {
+        // Transform preferences from object to array of strings
+        const selectedPreferences = Object.entries(formData.preferences)
+          .filter(([_, value]) => value)
+          .map(([key, _]) => key);
+
         const result = await signup({
           name: formData.name,
           email: formData.email,
           password: formData.password,
           location: formData.location,
-          preferences: formData.preferences,
+          preferences: selectedPreferences,
           communication_channel: formData.communicationChannel
         });
 

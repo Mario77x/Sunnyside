@@ -144,8 +144,29 @@ class ApiService {
       const data = await response.json();
       
       if (!response.ok) {
+        let errorMessage = `HTTP ${status}: ${response.statusText}`;
+        
+        if (data.detail) {
+          if (Array.isArray(data.detail)) {
+            // FastAPI validation errors - extract user-friendly messages
+            const validationErrors = data.detail.map((err: any) => {
+              if (err.msg) {
+                return err.msg;
+              }
+              return `${err.loc?.join(' ')} error`;
+            });
+            errorMessage = validationErrors.join(', ');
+          } else if (typeof data.detail === 'string') {
+            // Simple string error message
+            errorMessage = data.detail;
+          } else {
+            // Other object types - convert to string
+            errorMessage = JSON.stringify(data.detail);
+          }
+        }
+        
         return {
-          error: data.detail || `HTTP ${status}: ${response.statusText}`,
+          error: errorMessage,
           status
         };
       }
@@ -165,7 +186,7 @@ class ApiService {
     email: string;
     password: string;
     location?: string;
-    preferences?: Record<string, boolean>;
+    preferences?: string[];
     communication_channel?: string;
   }): Promise<ApiResponse<AuthTokens>> {
     const response = await fetch(`${API_BASE_URL}/api/v1/auth/signup`, {

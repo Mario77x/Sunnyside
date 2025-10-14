@@ -36,7 +36,7 @@ interface SignupData {
   email: string;
   password: string;
   location?: string;
-  preferences?: Record<string, boolean>;
+  preferences?: string[];
   communication_channel?: string;
 }
 
