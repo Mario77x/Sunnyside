@@ -21,6 +21,7 @@ class User(BaseModel):
     hashed_password: str = Field(...)
     location: Optional[str] = Field(None, max_length=100)
     preferences: Optional[List[str]] = Field(default_factory=list)
+    role: str = Field(default="user", description="User role (user, admin, etc.)")
     created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
 
 
@@ -30,6 +31,8 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=6)
     location: Optional[str] = Field(None, max_length=100)
     preferences: Optional[List[str]] = Field(default_factory=list)
+    role: Optional[str] = Field(default="user", description="User role (user, admin, etc.)")
+    invitation_token: Optional[str] = Field(None, description="Optional invitation token for automatic contact connection")
 
 
 class UserLogin(BaseModel):
@@ -43,6 +46,7 @@ class UserResponse(BaseModel):
     email: str
     location: Optional[str] = None
     preferences: List[str] = []
+    role: str = "user"
 
 
 class Token(BaseModel):

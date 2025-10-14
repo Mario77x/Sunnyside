@@ -2,9 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Input } from '@/components/ui/input';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Cloud, Sun, CloudRain, Calendar, ThumbsUp, AlertTriangle, Info, Users } from 'lucide-react';
+import { ArrowLeft, Cloud, Sun, CloudRain, Calendar as CalendarIcon, ThumbsUp, AlertTriangle, Info, Users, Loader2, CloudSnow, Zap, Eye, CloudDrizzle } from 'lucide-react';
+import { format } from 'date-fns';
+import { showError } from '@/utils/toast';
 import ThinkingScreen from '@/components/ThinkingScreen';
+import { apiService } from '@/services/api';
 
 const WeatherPlanning = () => {
   const navigate = useNavigate();
@@ -14,60 +20,179 @@ const WeatherPlanning = () => {
   const [selectedDays, setSelectedDays] = useState([]);
   const [weatherAvailable, setWeatherAvailable] = useState(true);
   const [isThinking, setIsThinking] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [weatherPreference, setWeatherPreference] = useState('either');
+  const [groupSize, setGroupSize] = useState('');
+  const [isLoadingWeather, setIsLoadingWeather] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (location.state?.activity) {
       setActivity(location.state.activity);
-      
-      // Check if selected date is too far in the future (more than 7 days)
-      const selectedDate = location.state.activity.selectedDate;
-      const daysDifference = selectedDate ? 
-        Math.ceil((new Date(selectedDate) - new Date()) / (1000 * 60 * 60 * 1000)) : 0;
-      
-      if (daysDifference > 7) {
-        setWeatherAvailable(false);
-        setWeatherData([]);
-      } else {
-        setWeatherAvailable(true);
-        const mockWeather = generateMockWeather();
-        setWeatherData(mockWeather);
-      }
+      // Load weather data immediately on component mount
+      loadWeatherData();
     } else {
       navigate('/');
     }
   }, [location, navigate]);
 
-  const generateMockWeather = () => {
-    const days = ['Today', 'Tomorrow', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    const conditions = ['sunny', 'cloudy', 'rainy', 'partly-cloudy'];
-    const temps = [18, 22, 16, 25, 20, 19, 23];
-    
-    return days.map((day, index) => ({
-      day,
-      date: new Date(Date.now() + index * 24 * 60 * 60 * 1000).toLocaleDateString(),
-      condition: conditions[Math.floor(Math.random() * conditions.length)],
-      temperature: temps[index],
-      precipitation: Math.random() * 100,
-      suitability: calculateSuitability(conditions[Math.floor(Math.random() * conditions.length)], activity?.weatherPreference)
-    }));
-  };
-
-  const calculateSuitability = (condition, preference) => {
-    if (preference === 'indoor') return 'good';
-    if (preference === 'outdoor') {
-      return condition === 'sunny' ? 'excellent' : 
-             condition === 'partly-cloudy' ? 'good' : 
-             condition === 'cloudy' ? 'fair' : 'poor';
+  const loadWeatherData = async () => {
+    setIsLoadingWeather(true);
+    try {
+      // Use Amsterdam coordinates as default (can be made configurable later)
+      const latitude = 52.3676;
+      const longitude = 4.9041;
+      
+      const response = await apiService.getWeatherForecast(latitude, longitude, 8);
+      if (response.data) {
+        const processedWeatherData = response.data.forecasts.map((forecast, index) => ({
+          day: index === 0 ? 'Today' : 
+               index === 1 ? 'Tomorrow' : 
+               new Date(forecast.date).toLocaleDateString('en-US', { weekday: 'long' }),
+          date: forecast.date,
+          condition: getConditionFromWeatherCode(forecast.weather_code),
+          temperature: Math.round((forecast.temperature_max + forecast.temperature_min) / 2),
+          temperature_max: Math.round(forecast.temperature_max),
+          temperature_min: Math.round(forecast.temperature_min),
+          precipitation: forecast.precipitation_probability,
+          precipitation_sum: forecast.precipitation_sum,
+          wind_speed: Math.round(forecast.wind_speed_max),
+          suitability: calculateSuitability(forecast.weather_code, forecast.precipitation_probability, weatherPreference),
+          weather_code: forecast.weather_code,
+          weather_description: forecast.weather_description
+        }));
+        setWeatherData(processedWeatherData);
+        setWeatherAvailable(true);
+      } else {
+        // Fallback to mock data if API fails
+        const mockWeather = generateMockWeather();
+        setWeatherData(mockWeather);
+        setWeatherAvailable(true);
+      }
+    } catch (error) {
+      console.error('Error loading weather data:', error);
+      // Use mock data as fallback
+      const mockWeather = generateMockWeather();
+      setWeatherData(mockWeather);
+      setWeatherAvailable(true);
+    } finally {
+      setIsLoadingWeather(false);
     }
-    return 'good'; // either
   };
 
-  const getWeatherIcon = (condition) => {
-    switch (condition) {
-      case 'sunny': return <Sun className="w-6 h-6 text-yellow-500" />;
-      case 'cloudy': return <Cloud className="w-6 h-6 text-gray-500" />;
-      case 'rainy': return <CloudRain className="w-6 h-6 text-blue-500" />;
-      default: return <Cloud className="w-6 h-6 text-gray-400" />;
+  const getConditionFromWeatherCode = (code) => {
+    if (code === 0) return 'sunny';
+    if (code <= 3) return 'partly-cloudy';
+    if (code >= 51 && code <= 67) return 'rainy';
+    if (code >= 80 && code <= 99) return 'rainy';
+    return 'cloudy';
+  };
+
+  const generateMockWeather = () => {
+    const days = ['Today', 'Tomorrow', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday', 'Monday'];
+    const conditions = ['sunny', 'cloudy', 'rainy', 'partly-cloudy'];
+    const temps = [18, 22, 16, 25, 20, 19, 23, 21];
+    
+    return days.map((day, index) => {
+      const condition = conditions[Math.floor(Math.random() * conditions.length)];
+      const baseTemp = temps[index];
+      return {
+        day,
+        date: new Date(Date.now() + index * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        condition,
+        temperature: baseTemp,
+        temperature_max: baseTemp + Math.floor(Math.random() * 5),
+        temperature_min: baseTemp - Math.floor(Math.random() * 5),
+        precipitation: Math.random() * 100,
+        precipitation_sum: Math.random() * 5,
+        wind_speed: Math.floor(Math.random() * 20) + 5,
+        suitability: calculateSuitability(condition === 'sunny' ? 800 : condition === 'rainy' ? 500 : 803, Math.random() * 100, weatherPreference),
+        weather_code: condition === 'sunny' ? 0 : condition === 'rainy' ? 61 : 2,
+        weather_description: condition === 'sunny' ? 'Clear sky' : condition === 'rainy' ? 'Light rain' : 'Partly cloudy'
+      };
+    });
+  };
+
+  const calculateSuitability = (weatherCode, precipitation, preference) => {
+    if (preference === 'indoor') {
+      // Indoor activities are less affected by weather
+      if (weatherCode >= 200 && weatherCode <= 232) return 'good'; // Thunderstorm - still good indoors
+      if (weatherCode >= 500 && weatherCode <= 531 && precipitation > 80) return 'excellent'; // Heavy rain - perfect for indoor
+      return 'good';
+    }
+    
+    if (preference === 'outdoor') {
+      // Clear sky
+      if (weatherCode === 800) return 'excellent';
+      // Few clouds
+      if (weatherCode === 801) return 'excellent';
+      // Scattered clouds
+      if (weatherCode === 802) return 'good';
+      // Broken clouds
+      if (weatherCode === 803) return 'fair';
+      // Overcast
+      if (weatherCode === 804) return 'fair';
+      // Light rain/drizzle
+      if ((weatherCode >= 300 && weatherCode <= 321) || (weatherCode >= 500 && weatherCode <= 511 && precipitation < 30)) return 'fair';
+      // Heavy rain, snow, thunderstorm
+      if (weatherCode >= 200 && weatherCode <= 232) return 'poor'; // Thunderstorm
+      if (weatherCode >= 500 && weatherCode <= 531 && precipitation > 60) return 'poor'; // Heavy rain
+      if (weatherCode >= 600 && weatherCode <= 622) return 'poor'; // Snow
+      if (weatherCode >= 701 && weatherCode <= 781) return 'fair'; // Atmosphere conditions
+      return 'fair';
+    }
+    
+    // Either preference - more flexible
+    if (weatherCode === 800 || weatherCode === 801) return 'excellent'; // Clear/few clouds
+    if (weatherCode === 802 || weatherCode === 803) return 'good'; // Scattered/broken clouds
+    if (weatherCode === 804) return 'fair'; // Overcast
+    if (weatherCode >= 300 && weatherCode <= 321) return 'fair'; // Drizzle
+    if (weatherCode >= 500 && weatherCode <= 531) {
+      return precipitation > 60 ? 'fair' : 'good'; // Rain based on intensity
+    }
+    if (weatherCode >= 200 && weatherCode <= 232) return 'fair'; // Thunderstorm
+    if (weatherCode >= 600 && weatherCode <= 622) return 'fair'; // Snow
+    if (weatherCode >= 701 && weatherCode <= 781) return 'fair'; // Atmosphere
+    return 'good';
+  };
+
+  const getWeatherIcon = (weatherCode, weatherDescription) => {
+    // Based on OpenWeatherMap Weather Condition Codes
+    // https://openweathermap.org/weather-conditions#Weather-Condition-Codes-2
+    
+    if (weatherCode >= 200 && weatherCode <= 232) {
+      // Group 2xx: Thunderstorm
+      return <Zap className="w-6 h-6 text-purple-500" />;
+    } else if (weatherCode >= 300 && weatherCode <= 321) {
+      // Group 3xx: Drizzle
+      return <CloudDrizzle className="w-6 h-6 text-blue-400" />;
+    } else if (weatherCode >= 500 && weatherCode <= 531) {
+      // Group 5xx: Rain
+      return <CloudRain className="w-6 h-6 text-blue-500" />;
+    } else if (weatherCode >= 600 && weatherCode <= 622) {
+      // Group 6xx: Snow
+      return <CloudSnow className="w-6 h-6 text-blue-200" />;
+    } else if (weatherCode >= 701 && weatherCode <= 781) {
+      // Group 7xx: Atmosphere (mist, smoke, haze, dust, fog, sand, ash, squall, tornado)
+      return <Eye className="w-6 h-6 text-gray-400" />;
+    } else if (weatherCode === 800) {
+      // Group 800: Clear sky
+      return <Sun className="w-6 h-6 text-yellow-500" />;
+    } else if (weatherCode >= 801 && weatherCode <= 804) {
+      // Group 80x: Clouds
+      if (weatherCode === 801) {
+        // Few clouds: 11-25%
+        return <Sun className="w-6 h-6 text-yellow-400" />;
+      } else if (weatherCode === 802) {
+        // Scattered clouds: 25-50%
+        return <Cloud className="w-6 h-6 text-gray-400" />;
+      } else {
+        // Broken clouds: 51-84% (803) or Overcast clouds: 85-100% (804)
+        return <Cloud className="w-6 h-6 text-gray-500" />;
+      }
+    } else {
+      // Fallback for unknown codes
+      return <Cloud className="w-6 h-6 text-gray-400" />;
     }
   };
 
@@ -81,18 +206,6 @@ const WeatherPlanning = () => {
     }
   };
 
-  const getOptimalDays = () => {
-    return weatherData
-      .filter(day => day.suitability === 'excellent' || day.suitability === 'good')
-      .slice(0, 3);
-  };
-
-  const getBackupDays = () => {
-    return weatherData
-      .filter(day => day.suitability === 'fair')
-      .slice(0, 2);
-  };
-
   const handleDaySelect = (day) => {
     setSelectedDays(prev => 
       prev.includes(day.day) 
@@ -101,9 +214,67 @@ const WeatherPlanning = () => {
     );
   };
 
-  const handleContinue = () => {
+  const handleDateSelect = (date) => {
+    setSelectedDate(date);
+    // Clear selected days when a specific date is chosen
+    setSelectedDays([]);
+  };
+
+  const getWeatherReminder = () => {
+    if (!selectedDate) return null;
+
+    const selectedDateStr = selectedDate.toISOString().split('T')[0];
+    const daysDifference = Math.ceil((selectedDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+    
+    // Check if date is within 8-day forecast
+    if (daysDifference > 8) {
+      return {
+        type: 'info',
+        message: 'No forecast available for this date. Consider having a backup plan ready.',
+        icon: <Info className="w-5 h-5 text-blue-600" />
+      };
+    }
+
+    // Find weather data for selected date
+    const weatherForDate = weatherData.find(day => day.date === selectedDateStr);
+    if (!weatherForDate) {
+      return {
+        type: 'info',
+        message: 'No forecast available for this date. Consider having a backup plan ready.',
+        icon: <Info className="w-5 h-5 text-blue-600" />
+      };
+    }
+
+    // Check for rain
+    if (weatherForDate.condition === 'rainy' || weatherForDate.precipitation > 60) {
+      return {
+        type: 'warning',
+        message: 'Rain is predicted for this day. Consider having a backup plan or indoor alternative.',
+        icon: <AlertTriangle className="w-5 h-5 text-yellow-600" />
+      };
+    }
+
+    // Check for good weather
+    if (weatherForDate.condition === 'sunny' || (weatherForDate.condition === 'partly-cloudy' && weatherForDate.wind_speed < 20)) {
+      return {
+        type: 'success',
+        message: 'Looks like great weather for this day!',
+        icon: <ThumbsUp className="w-5 h-5 text-green-600" />
+      };
+    }
+
+    return null;
+  };
+
+  const handleContinue = async () => {
+    // Date selection is now optional - users can proceed without selecting a date for flexibility
+    setIsSubmitting(true);
+    
     const updatedActivity = {
       ...activity,
+      selectedDate: selectedDate?.toISOString(),
+      weatherPreference,
+      groupSize,
       selectedDays: selectedDays.length > 0 ? selectedDays : [activity.timeframe],
       weatherData,
       status: 'weather-planned'
@@ -115,8 +286,12 @@ const WeatherPlanning = () => {
 
   const handleThinkingComplete = () => {
     setIsThinking(false);
+    setIsSubmitting(false);
     const updatedActivity = {
       ...activity,
+      selectedDate: selectedDate?.toISOString(),
+      weatherPreference,
+      groupSize,
       selectedDays: selectedDays.length > 0 ? selectedDays : [activity.timeframe],
       weatherData,
       status: 'weather-planned'
@@ -124,12 +299,12 @@ const WeatherPlanning = () => {
     
     // Update activity in storage
     const activities = JSON.parse(localStorage.getItem('sunnyside_activities') || '[]');
-    const updatedActivities = activities.map(act => 
+    const updatedActivities = activities.map(act =>
       act.id === activity.id ? updatedActivity : act
     );
     localStorage.setItem('sunnyside_activities', JSON.stringify(updatedActivities));
     
-    navigate('/invite-guests', { state: { activity: updatedActivity } });
+    navigate('/create-activity', { state: { activity: updatedActivity, step: 'suggestions-pre-invites' } });
   };
 
   if (isThinking) {
@@ -143,8 +318,7 @@ const WeatherPlanning = () => {
 
   if (!activity) return null;
 
-  const optimalDays = getOptimalDays();
-  const backupDays = getBackupDays();
+  const weatherReminder = getWeatherReminder();
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -152,13 +326,13 @@ const WeatherPlanning = () => {
       <header className="bg-white shadow-sm border-b">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center gap-4">
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               onClick={() => navigate('/create-activity')}
               className="text-gray-600"
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
-              Back
+              Back to Dashboard
             </Button>
             <h1 className="text-xl font-semibold">Weather Planning</h1>
           </div>
@@ -166,72 +340,145 @@ const WeatherPlanning = () => {
       </header>
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
-        {/* Activity Summary */}
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>{activity.title}</CardTitle>
-            <CardDescription>{activity.description}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-4 text-sm text-gray-600">
-              <span>Weather preference: <Badge variant="outline">{activity.weatherPreference}</Badge></span>
-              <span>Group size: {activity.groupSize}</span>
-              {activity.selectedDate && (
-                <span>Selected date: {new Date(activity.selectedDate).toLocaleDateString()}</span>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {!weatherAvailable ? (
-          /* No Weather Available */
+        <div className="space-y-6">
+          {/* Activity Summary */}
           <Card className="mb-6">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Info className="w-5 h-5 text-blue-600" />
-                Weather Forecast Not Available
-              </CardTitle>
-              <CardDescription>
-                Weather forecasts are only available for the next 7 days. Your selected date is too far in the future.
-              </CardDescription>
+              <CardTitle>{activity.title}</CardTitle>
+              <CardDescription>{activity.description}</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-gray-600">
-                Since you've chosen an {activity.weatherPreference} activity, we recommend adding backup plans:
-              </p>
-              {activity.weatherPreference === 'outdoor' && (
-                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <h4 className="font-medium text-yellow-800 mb-2">Outdoor Activity Recommendation</h4>
-                  <p className="text-yellow-700 text-sm">
-                    Consider having an indoor backup plan ready in case of bad weather. You can finalize the venue closer to the date when weather forecasts become available.
-                  </p>
-                </div>
-              )}
-              <Button 
-                onClick={handleContinue}
-                style={{ backgroundColor: '#1155cc', color: 'white' }}
-              >
-                Continue to Send Invitations
-              </Button>
+            <CardContent>
+              <div className="flex items-center gap-4 text-sm text-gray-600">
+                <span>Timeframe: {activity.timeframe}</span>
+              </div>
             </CardContent>
           </Card>
-        ) : (
-          /* Weather Available */
-          <div className="grid gap-6 mb-8">
-            {/* Optimal Days */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <ThumbsUp className="w-5 h-5 text-green-600" />
-                  Optimal Days
-                </CardTitle>
-                <CardDescription>
-                  Based on weather forecast and your {activity.weatherPreference} preference
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid md:grid-cols-3 gap-4">
-                  {optimalDays.map((day, index) => (
+
+          {/* Unified Planning Form */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Activity Planning</CardTitle>
+              <CardDescription>
+                Set your date, preferences, and group size. The weather forecast will help you plan accordingly.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Date Selection */}
+              <div className="space-y-3">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <CalendarIcon className="w-4 h-4" />
+                  Select Date (Optional - leave empty for flexibility)
+                </label>
+                <div className="flex items-center gap-3">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={`justify-start text-left font-normal ${!selectedDate && 'text-muted-foreground'}`}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {selectedDate ? format(selectedDate, 'PPP') : 'Pick a date or leave flexible'}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={selectedDate}
+                        onSelect={handleDateSelect}
+                        disabled={(date) => date < new Date()}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                  {selectedDate && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelectedDate(null)}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Weather Preference */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <Cloud className="w-4 h-4" />
+                  Indoor/Outdoor Preference
+                </label>
+                <div className="flex gap-2">
+                  {['indoor', 'outdoor', 'either'].map((pref) => (
+                    <Badge
+                      key={pref}
+                      variant={weatherPreference === pref ? "default" : "outline"}
+                      className="cursor-pointer"
+                      onClick={() => setWeatherPreference(pref)}
+                    >
+                      {pref.charAt(0).toUpperCase() + pref.slice(1)}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              {/* Group Size */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <Users className="w-4 h-4" />
+                  Group Size
+                </label>
+                <Input
+                  value={groupSize}
+                  onChange={(e) => setGroupSize(e.target.value)}
+                  placeholder="e.g., 4-6 people, small group, family"
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Weather Reminder */}
+          {weatherReminder && (
+            <Card className={`border-2 ${
+              weatherReminder.type === 'success' ? 'border-green-200 bg-green-50' :
+              weatherReminder.type === 'warning' ? 'border-yellow-200 bg-yellow-50' :
+              'border-blue-200 bg-blue-50'
+            }`}>
+              <CardContent className="pt-4">
+                <div className="flex items-center gap-2">
+                  {weatherReminder.icon}
+                  <span className={`text-sm font-medium ${
+                    weatherReminder.type === 'success' ? 'text-green-800' :
+                    weatherReminder.type === 'warning' ? 'text-yellow-800' :
+                    'text-blue-800'
+                  }`}>
+                    {weatherReminder.message}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Weather Forecast */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Cloud className="w-5 h-5 text-blue-600" />
+                8-Day Weather Forecast
+              </CardTitle>
+              <CardDescription>
+                Click on days to select them as options for your activity
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isLoadingWeather ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin mr-2" />
+                  <span className="text-sm text-gray-600">Loading weather forecast...</span>
+                </div>
+              ) : (
+                <div className="grid md:grid-cols-4 lg:grid-cols-4 gap-4">
+                  {weatherData.map((day, index) => (
                     <div
                       key={day.day}
                       className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
@@ -242,97 +489,80 @@ const WeatherPlanning = () => {
                       onClick={() => handleDaySelect(day)}
                     >
                       <div className="flex items-center justify-between mb-2">
-                        <span className="font-medium">{day.day}</span>
-                        {getWeatherIcon(day.condition)}
+                        <span className="font-medium text-sm">{day.day}</span>
+                        {getWeatherIcon(day.weather_code, day.weather_description)}
                       </div>
-                      <div className="text-sm text-gray-600 mb-2">
-                        {day.date}
+                      <div className="text-xs text-gray-600 mb-2">
+                        {new Date(day.date).toLocaleDateString()}
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-lg font-semibold">{day.temperature}°C</span>
-                        <Badge className={getSuitabilityColor(day.suitability)}>
-                          {day.suitability}
-                        </Badge>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-sm">
+                          <div className="font-semibold">{day.temperature_max}°</div>
+                          <div className="text-gray-500">{day.temperature_min}°</div>
+                        </div>
+                        <div className="text-xs text-gray-500 capitalize">
+                          {day.weather_description}
+                        </div>
                       </div>
+                      {day.precipitation > 0 && (
+                        <div className="text-xs text-blue-600">
+                          {Math.round(day.precipitation)}% rain
+                        </div>
+                      )}
                     </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Selected Days Summary */}
+          {selectedDays.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Selected Days</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-2">
+                  {selectedDays.map(day => (
+                    <Badge key={day} variant="default" className="px-3 py-1">
+                      {day}
+                    </Badge>
                   ))}
                 </div>
               </CardContent>
             </Card>
+          )}
 
-            {/* Backup Days */}
-            {backupDays.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <AlertTriangle className="w-5 h-5 text-yellow-600" />
-                    Backup Options
-                  </CardTitle>
-                  <CardDescription>
-                    Alternative days if your preferred dates don't work
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid md:grid-cols-2 gap-4">
-                    {backupDays.map((day, index) => (
-                      <div
-                        key={day.day}
-                        className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
-                          selectedDays.includes(day.day) 
-                            ? 'border-blue-500 bg-blue-50' 
-                            : 'border-gray-200 hover:border-gray-300'
-                        }`}
-                        onClick={() => handleDaySelect(day)}
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-medium">{day.day}</span>
-                          {getWeatherIcon(day.condition)}
-                        </div>
-                        <div className="text-sm text-gray-600 mb-2">
-                          {day.date}
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-lg font-semibold">{day.temperature}°C</span>
-                          <Badge className={getSuitabilityColor(day.suitability)}>
-                            {day.suitability}
-                          </Badge>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+          {/* Continue Button */}
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              onClick={() => navigate('/create-activity')}
+              className="flex-1"
+              style={{ borderColor: '#1155cc', color: '#1155cc' }}
+            >
+              Back
+            </Button>
+            <Button
+              onClick={handleContinue}
+              disabled={isSubmitting || isLoadingWeather}
+              className="flex-1"
+              style={{ backgroundColor: '#1155cc', color: 'white' }}
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  Activity Suggestions
+                  <Users className="w-4 h-4 ml-2" />
+                </>
+              )}
+            </Button>
           </div>
-        )}
-
-        {/* Selected Days Summary */}
-        {selectedDays.length > 0 && (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Selected Days</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-2">
-                {selectedDays.map(day => (
-                  <Badge key={day} variant="default" className="px-3 py-1">
-                    {day}
-                  </Badge>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Continue Button */}
-        <div className="flex justify-end">
-          <Button 
-            onClick={handleContinue}
-            style={{ backgroundColor: '#1155cc', color: 'white' }}
-          >
-            Continue to Send Invitations
-            <Users className="w-4 h-4 ml-2" />
-          </Button>
         </div>
       </div>
     </div>

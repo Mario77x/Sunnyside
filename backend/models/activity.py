@@ -34,6 +34,20 @@ class Invitee(BaseModel):
     venue_suggestion: Optional[str] = Field(None, max_length=200)
 
 
+class ActivitySuggestion(BaseModel):
+    title: str = Field(..., max_length=200)
+    description: str = Field(..., max_length=1000)
+    category: str = Field(..., max_length=100)
+    duration: str = Field(..., max_length=100)
+    difficulty: str = Field(..., max_length=50)
+    budget: str = Field(..., max_length=50)
+    indoor_outdoor: str = Field(..., max_length=50)
+    group_size: str = Field(..., max_length=100)
+    weather_considerations: Optional[str] = Field(None, max_length=500)
+    tips: str = Field(..., max_length=500)
+    is_custom: Optional[bool] = Field(default=False)
+
+
 class WeatherData(BaseModel):
     date: datetime
     temperature: Optional[float] = None
@@ -65,6 +79,9 @@ class Activity(BaseModel):
     
     # Weather and planning data
     weather_data: Optional[List[WeatherData]] = Field(default_factory=list)
+    
+    # Activity suggestions
+    suggestions: Optional[List[ActivitySuggestion]] = Field(default_factory=list)
     
     # Invitees and responses
     invitees: List[Invitee] = Field(default_factory=list)
@@ -108,6 +125,7 @@ class ActivityResponse(BaseModel):
     selected_date: Optional[datetime] = None
     selected_days: List[str] = []
     weather_data: List[WeatherData] = []
+    suggestions: List[ActivitySuggestion] = []
     invitees: List[Invitee] = []
     created_at: datetime
     updated_at: datetime

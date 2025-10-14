@@ -28,7 +28,6 @@ const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
 
     setIsLoading(true);
     setError(null);
-    setRecommendations([]);
     setSelectedRecommendation(null);
     setMetadata(null);
 
@@ -36,7 +35,8 @@ const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
       const response = await apiService.getRecommendations(query.trim(), 5);
       
       if (response.data && response.data.success) {
-        setRecommendations(response.data.recommendations);
+        // Append new recommendations instead of replacing
+        setRecommendations(prev => [...prev, ...response.data.recommendations]);
         setMetadata(response.data.metadata);
       } else {
         setError(response.data?.error || response.error || 'Failed to get recommendations');
@@ -68,6 +68,29 @@ const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
     setError(null);
     setMetadata(null);
     setQuery('');
+  };
+
+  const generateMoreRecommendations = async () => {
+    if (!query.trim() || isLoading) return;
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await apiService.getRecommendations(query.trim(), 3);
+      
+      if (response.data && response.data.success) {
+        // Append new recommendations to existing ones
+        setRecommendations(prev => [...prev, ...response.data.recommendations]);
+        setMetadata(response.data.metadata);
+      } else {
+        setError(response.data?.error || response.error || 'Failed to get more recommendations');
+      }
+    } catch (err) {
+      setError('Network error occurred while getting more recommendations');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -109,9 +132,27 @@ const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
                 )}
               </Button>
               
+              {recommendations.length > 0 && (
+                <Button
+                  onClick={generateMoreRecommendations}
+                  disabled={isLoading}
+                  variant="outline"
+                  style={{ borderColor: '#1155cc', color: '#1155cc' }}
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Getting More...
+                    </>
+                  ) : (
+                    'Generate More'
+                  )}
+                </Button>
+              )}
+              
               {(recommendations.length > 0 || error) && (
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   onClick={clearResults}
                   disabled={isLoading}
                 >
@@ -175,29 +216,42 @@ const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
 
                         {recommendation.venue && (
                           <div className="bg-gray-50 p-3 rounded-md space-y-2">
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <h5 className="font-medium">{recommendation.venue.name}</h5>
-                                <div className="flex items-center gap-1 text-sm text-gray-600 mt-1">
-                                  <MapPin className="w-3 h-3" />
-                                  <span>{recommendation.venue.address}</span>
-                                </div>
-                              </div>
-                              {recommendation.venue.link && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    window.open(recommendation.venue.link, '_blank');
-                                  }}
-                                  className="flex-shrink-0"
-                                >
-                                  <ExternalLink className="w-3 h-3" />
-                                </Button>
-                              )}
-                            </div>
-                          </div>
+                             <div className="flex items-start justify-between">
+                               <div className="flex-1">
+                                 <h5 className="font-medium">{recommendation.venue.name}</h5>
+                                 <div className="flex items-center gap-1 text-sm text-gray-600 mt-1">
+                                   <MapPin className="w-3 h-3" />
+                                   <span>{recommendation.venue.address}</span>
+                                 </div>
+                               </div>
+                               {recommendation.venue.link && (
+                                 <Button
+                                   variant="ghost"
+                                   size="sm"
+                                   onClick={(e) => {
+                                     e.stopPropagation();
+                                     window.open(recommendation.venue.link, '_blank');
+                                   }}
+                                   className="flex-shrink-0"
+                                 >
+                                   <ExternalLink className="w-3 h-3" />
+                                 </Button>
+                               )}
+                             </div>
+                             {recommendation.venue.image_url && (
+                               <div className="aspect-video bg-gray-200 rounded-lg overflow-hidden">
+                                 <img
+                                   src={recommendation.venue.image_url}
+                                   alt={recommendation.venue.name}
+                                   className="w-full h-full object-cover"
+                                   onError={(e) => {
+                                     const target = e.target as HTMLImageElement;
+                                     target.style.display = 'none';
+                                   }}
+                                 />
+                               </div>
+                             )}
+                           </div>
                         )}
 
                         {recommendation.tips && (

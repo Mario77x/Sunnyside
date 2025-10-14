@@ -50,14 +50,12 @@ class CurrentWeatherResponse(BaseModel):
 async def get_weather_forecast_endpoint(
     latitude: float = Query(..., ge=-90, le=90, description="Latitude coordinate"),
     longitude: float = Query(..., ge=-180, le=180, description="Longitude coordinate"),
-    days: int = Query(7, ge=1, le=14, description="Number of forecast days"),
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncIOMotorDatabase = Depends(get_database)
+    days: int = Query(7, ge=1, le=14, description="Number of forecast days")
 ):
     """
     Get weather forecast for a specific location.
     
-    Requires authentication. Fetches weather forecast data from KNMI API
+    Public endpoint - no authentication required. Fetches weather forecast data from KNMI API
     for the specified coordinates and number of days.
     
     Args:
@@ -69,9 +67,6 @@ async def get_weather_forecast_endpoint(
         Weather forecast data including location info and daily forecasts
     """
     try:
-        # Authenticate user
-        current_user = await get_current_user(credentials, db)
-        
         # Validate coordinates
         if not (-90 <= latitude <= 90):
             raise HTTPException(
@@ -107,14 +102,12 @@ async def get_weather_forecast_endpoint(
 @router.get("/current", response_model=CurrentWeatherResponse)
 async def get_current_weather_endpoint(
     latitude: float = Query(..., ge=-90, le=90, description="Latitude coordinate"),
-    longitude: float = Query(..., ge=-180, le=180, description="Longitude coordinate"),
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncIOMotorDatabase = Depends(get_database)
+    longitude: float = Query(..., ge=-180, le=180, description="Longitude coordinate")
 ):
     """
     Get current weather conditions for a specific location.
     
-    Requires authentication. Fetches current weather data from KNMI API
+    Public endpoint - no authentication required. Fetches current weather data from KNMI API
     for the specified coordinates.
     
     Args:
@@ -125,9 +118,6 @@ async def get_current_weather_endpoint(
         Current weather data including location info and current conditions
     """
     try:
-        # Authenticate user
-        current_user = await get_current_user(credentials, db)
-        
         # Validate coordinates
         if not (-90 <= latitude <= 90):
             raise HTTPException(

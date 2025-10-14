@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from datetime import timedelta
+from datetime import timedelta, datetime
+from bson import ObjectId
 
 from backend.models.user import UserCreate, UserLogin, UserResponse, Token
+from backend.models.pending_invitation import InvitationStatus
 from backend.auth import (
     authenticate_user,
     create_user,
@@ -12,6 +14,7 @@ from backend.auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     security
 )
+from backend.services.notifications import NotificationService
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -36,16 +39,94 @@ async def signup(
     Register a new user.
     
     Creates a new user account with the provided information and returns
-    an access token for immediate login.
+    an access token for immediate login. If an invitation token is provided,
+    it will automatically connect the user with the person who invited them.
     """
     try:
+        # Extract invitation token before creating user
+        invitation_token = user_data.invitation_token
+        user_dict = user_data.dict()
+        # Remove invitation_token from user data as it's not part of the User model
+        user_dict.pop('invitation_token', None)
+        
         # Create user in database
-        user = await create_user(db, user_data.dict())
+        user = await create_user(db, user_dict)
+        user_id = str(user["_id"])
+        
+        # Handle invitation token if provided
+        if invitation_token:
+            try:
+                # Find the pending invitation
+                invitation = await db.pending_invitations.find_one({
+                    "invitation_token": invitation_token,
+                    "invitee_email": user_data.email,
+                    "status": InvitationStatus.PENDING
+                })
+                
+                if invitation and datetime.utcnow() <= invitation["expires_at"]:
+                    # Import here to avoid circular imports
+                    from backend.routes.contacts import create_contact_relationship
+                    from backend.models.contact import ContactStatus
+                    
+                    # Create bidirectional contact relationships
+                    # From inviter to new user
+                    await create_contact_relationship(
+                        db,
+                        invitation["inviter_user_id"],
+                        user_id,
+                        invitation.get("message")
+                    )
+                    
+                    # From new user to inviter
+                    await create_contact_relationship(
+                        db,
+                        user_id,
+                        invitation["inviter_user_id"]
+                    )
+                    
+                    # Update both to accepted status
+                    await db.contacts.update_many(
+                        {
+                            "$or": [
+                                {"user_id": user_id, "contact_user_id": invitation["inviter_user_id"]},
+                                {"user_id": invitation["inviter_user_id"], "contact_user_id": user_id}
+                            ]
+                        },
+                        {"$set": {"status": ContactStatus.ACCEPTED, "updated_at": datetime.utcnow()}}
+                    )
+                    
+                    # Mark invitation as accepted
+                    await db.pending_invitations.update_one(
+                        {"_id": invitation["_id"]},
+                        {
+                            "$set": {
+                                "status": InvitationStatus.ACCEPTED,
+                                "accepted_at": datetime.utcnow()
+                            }
+                        }
+                    )
+                    
+                    # Create notification for the inviter
+                    notification_service = NotificationService()
+                    await notification_service.create_notification(
+                        db,
+                        invitation["inviter_user_id"],
+                        f"{user_data.name} accepted your invitation and joined Sunnyside!",
+                        "invitation_accepted",
+                        {
+                            "new_user_name": user_data.name,
+                            "new_user_email": user_data.email
+                        }
+                    )
+                    
+            except Exception as e:
+                # Log the error but don't fail the signup process
+                print(f"Error processing invitation token: {str(e)}")
         
         # Create access token
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
-            data={"sub": str(user["_id"])},
+            data={"sub": user_id},
             expires_delta=access_token_expires
         )
         

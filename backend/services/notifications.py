@@ -8,6 +8,8 @@ from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from pydantic import BaseModel
 
+from backend.utils.environment import get_frontend_url, get_invite_link, get_signup_link, is_local_development
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -34,8 +36,13 @@ class NotificationService:
         if self.sendgrid_api_key:
             self.sg = SendGridAPIClient(api_key=self.sendgrid_api_key)
         else:
-            logger.warning("SendGrid API key not found. Email functionality will be disabled.")
-            self.sg = None
+            # Temporary solution, sending links to local env during PoC testing, to be removed before launch
+            if is_local_development():
+                logger.warning("SendGrid API key not found, but running in local development. Email functionality will be simulated.")
+                self.sg = None
+            else:
+                logger.warning("SendGrid API key not found. Email functionality will be disabled.")
+                self.sg = None
     
     async def send_email(
         self, 
@@ -58,7 +65,12 @@ class NotificationService:
         Returns:
             bool: True if email was sent successfully, False otherwise
         """
-        if not self.sg:
+        # Temporary solution, sending links to local env during PoC testing, to be removed before launch
+        if not self.sg and is_local_development():
+            logger.info(f"LOCAL DEV: Would send email to {to_email} with subject '{subject}'")
+            logger.info(f"LOCAL DEV: Email content preview: {html_content[:200]}...")
+            return True
+        elif not self.sg:
             logger.error("SendGrid client not initialized. Cannot send email.")
             return False
         
@@ -95,7 +107,8 @@ class NotificationService:
         activity_title: str,
         activity_description: str,
         custom_message: Optional[str] = None,
-        invite_link: Optional[str] = None
+        invite_link: Optional[str] = None,
+        activity_details: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
         Send an activity invitation email.
@@ -114,6 +127,96 @@ class NotificationService:
         """
         subject = f"You're invited to {activity_title}!"
         
+        # Extract activity details
+        selected_date = activity_details.get('selected_date') if activity_details else None
+        selected_days = activity_details.get('selected_days', []) if activity_details else []
+        weather_preference = activity_details.get('weather_preference') if activity_details else None
+        group_size = activity_details.get('group_size') if activity_details else None
+        suggestions = activity_details.get('suggestions', []) if activity_details else []
+        weather_data = activity_details.get('weather_data', []) if activity_details else []
+        
+        # Format date information
+        date_info = ""
+        if selected_date:
+            from datetime import datetime
+            try:
+                date_obj = datetime.fromisoformat(selected_date.replace('Z', '+00:00'))
+                date_info = date_obj.strftime('%A, %B %d, %Y')
+            except:
+                date_info = selected_date
+        elif selected_days:
+            date_info = ', '.join(selected_days)
+        else:
+            date_info = "Flexible dates"
+        
+        # Create activity details section
+        activity_details_html = f"""
+        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <h3 style="margin-top: 0; color: #2c5aa0;">{activity_title}</h3>
+            <p style="margin-bottom: 10px;">{activity_description}</p>
+            
+            <div style="margin: 15px 0;">
+                <p style="margin: 5px 0;"><strong>📅 Date:</strong> {date_info}</p>
+                {f'<p style="margin: 5px 0;"><strong>🌤️ Preference:</strong> {weather_preference.title()}</p>' if weather_preference else ''}
+                {f'<p style="margin: 5px 0;"><strong>👥 Group size:</strong> {group_size}</p>' if group_size else ''}
+            </div>
+        </div>
+        """
+        
+        # Create weather forecast section
+        weather_html = ""
+        if weather_data and len(weather_data) > 0:
+            weather_items = []
+            for i, day in enumerate(weather_data[:4]):  # Show first 4 days
+                day_name = "Today" if i == 0 else "Tomorrow" if i == 1 else day.get('day', f'Day {i+1}')
+                temp_max = day.get('temperature_max', day.get('temperature', 'N/A'))
+                temp_min = day.get('temperature_min', day.get('temperature', 'N/A'))
+                condition = day.get('condition', day.get('weather_description', 'Unknown'))
+                precipitation = day.get('precipitation', day.get('precipitation_chance', 0))
+                
+                weather_emoji = "☀️" if condition == 'sunny' else "🌧️" if condition == 'rainy' else "☁️"
+                
+                weather_items.append(f"""
+                <div style="display: inline-block; margin: 5px; padding: 10px; background: white; border-radius: 6px; text-align: center; min-width: 80px;">
+                    <div style="font-weight: bold; font-size: 12px;">{day_name}</div>
+                    <div style="font-size: 20px; margin: 5px 0;">{weather_emoji}</div>
+                    <div style="font-size: 12px;">{temp_max}°/{temp_min}°</div>
+                    {f'<div style="font-size: 10px; color: #666;">{int(precipitation)}% rain</div>' if precipitation > 0 else ''}
+                </div>
+                """)
+            
+            weather_html = f"""
+            <div style="background-color: #e3f2fd; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                <h4 style="margin-top: 0; color: #1976d2;">🌤️ Weather Forecast</h4>
+                <div style="text-align: center;">
+                    {''.join(weather_items)}
+                </div>
+            </div>
+            """
+        
+        # Create suggestions section
+        suggestions_html = ""
+        if suggestions and len(suggestions) > 0:
+            suggestion_items = []
+            for suggestion in suggestions[:3]:  # Show first 3 suggestions
+                suggestion_items.append(f"""
+                <div style="margin: 10px 0; padding: 12px; background: white; border-left: 4px solid #ff9800; border-radius: 4px;">
+                    <div style="font-weight: bold; color: #f57c00;">{suggestion.get('title', 'Activity Suggestion')}</div>
+                    <div style="font-size: 14px; color: #666; margin-top: 5px;">{suggestion.get('description', '')}</div>
+                    <div style="font-size: 12px; color: #999; margin-top: 5px;">
+                        {suggestion.get('duration', '')} • {suggestion.get('budget', '')} • {suggestion.get('indoor_outdoor', '')}
+                    </div>
+                </div>
+                """)
+            
+            suggestions_html = f"""
+            <div style="background-color: #fff3e0; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                <h4 style="margin-top: 0; color: #f57c00;">💡 Activity Ideas</h4>
+                {''.join(suggestion_items)}
+                {f'<p style="font-size: 12px; color: #666; text-align: center; margin-top: 10px;">+{len(suggestions) - 3} more suggestions</p>' if len(suggestions) > 3 else ''}
+            </div>
+            """
+        
         # Create HTML content
         html_content = f"""
         <html>
@@ -125,12 +228,13 @@ class NotificationService:
                 
                 <p>{organizer_name} has invited you to join an activity:</p>
                 
-                <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                    <h3 style="margin-top: 0; color: #2c5aa0;">{activity_title}</h3>
-                    <p style="margin-bottom: 0;">{activity_description}</p>
-                </div>
+                {activity_details_html}
                 
                 {f'<div style="background-color: #e8f4f8; padding: 15px; border-radius: 8px; margin: 20px 0;"><p style="margin: 0;"><strong>Personal message:</strong> {custom_message}</p></div>' if custom_message else ''}
+                
+                {weather_html}
+                
+                {suggestions_html}
                 
                 {f'<div style="text-align: center; margin: 30px 0;"><a href="{invite_link}" style="background-color: #2c5aa0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Respond to Invitation</a></div>' if invite_link else ''}
                 
@@ -141,6 +245,122 @@ class NotificationService:
                 <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
                 <p style="font-size: 12px; color: #666;">
                     This email was sent by Sunnyside. If you have any questions, please contact us.
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return await self.send_email(to_email, subject, html_content)
+    
+    async def send_contact_request_email(
+        self,
+        to_email: str,
+        to_name: str,
+        requester_name: str,
+        message: Optional[str] = None,
+        app_link: Optional[str] = None
+    ) -> bool:
+        """
+        Send a contact request email to an existing user.
+        
+        Args:
+            to_email: Recipient email address
+            to_name: Recipient name
+            requester_name: Name of the person requesting contact
+            message: Optional message from requester
+            app_link: Link to the app to respond
+            
+        Returns:
+            bool: True if email was sent successfully, False otherwise
+        """
+        subject = f"{requester_name} wants to connect with you on Sunnyside"
+        
+        # Create HTML content
+        html_content = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                <h2 style="color: #2c5aa0;">New Contact Request</h2>
+                
+                <p>Hi {to_name},</p>
+                
+                <p>{requester_name} would like to connect with you on Sunnyside!</p>
+                
+                {f'<div style="background-color: #e8f4f8; padding: 15px; border-radius: 8px; margin: 20px 0;"><p style="margin: 0;"><strong>Message:</strong> {message}</p></div>' if message else ''}
+                
+                <p>You can respond to this request by logging into your Sunnyside account.</p>
+                
+                {f'<div style="text-align: center; margin: 30px 0;"><a href="{app_link}" style="background-color: #2c5aa0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Open Sunnyside</a></div>' if app_link else ''}
+                
+                <p>Best regards,<br>The Sunnyside Team</p>
+                
+                <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                <p style="font-size: 12px; color: #666;">
+                    This email was sent by Sunnyside. If you have any questions, please contact us.
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return await self.send_email(to_email, subject, html_content)
+    
+    async def send_account_invitation_email(
+        self,
+        to_email: str,
+        to_name: Optional[str],
+        inviter_name: str,
+        invitation_token: str,
+        message: Optional[str] = None,
+        signup_link: Optional[str] = None
+    ) -> bool:
+        """
+        Send an account invitation email to a non-existing user.
+        
+        Args:
+            to_email: Recipient email address
+            to_name: Recipient name (if provided)
+            inviter_name: Name of the person sending the invitation
+            invitation_token: Unique token for the invitation
+            message: Optional message from inviter
+            signup_link: Link to sign up with the invitation
+            
+        Returns:
+            bool: True if email was sent successfully, False otherwise
+        """
+        subject = f"{inviter_name} invited you to join Sunnyside"
+        
+        # Create signup link with token if base link provided
+        full_signup_link = f"{signup_link}?token={invitation_token}" if signup_link else None
+        
+        # Create HTML content
+        html_content = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                <h2 style="color: #2c5aa0;">You're Invited to Join Sunnyside!</h2>
+                
+                <p>Hi{f' {to_name}' if to_name else ''},</p>
+                
+                <p>{inviter_name} has invited you to join Sunnyside, the app that makes planning activities with friends easy and fun!</p>
+                
+                {f'<div style="background-color: #e8f4f8; padding: 15px; border-radius: 8px; margin: 20px 0;"><p style="margin: 0;"><strong>Personal message:</strong> {message}</p></div>' if message else ''}
+                
+                <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                    <h3 style="margin-top: 0; color: #2c5aa0;">What is Sunnyside?</h3>
+                    <p style="margin-bottom: 0;">Sunnyside helps you plan activities with friends by considering weather, preferences, and availability. Create activities, invite friends, and make memories together!</p>
+                </div>
+                
+                {f'<div style="text-align: center; margin: 30px 0;"><a href="{full_signup_link}" style="background-color: #2c5aa0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Join Sunnyside</a></div>' if full_signup_link else ''}
+                
+                <p>Once you create your account, you'll be automatically connected with {inviter_name} and can start planning activities together!</p>
+                
+                <p>Best regards,<br>The Sunnyside Team</p>
+                
+                <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                <p style="font-size: 12px; color: #666;">
+                    This invitation was sent by {inviter_name} through Sunnyside. If you have any questions, please contact us.
                 </p>
             </div>
         </body>

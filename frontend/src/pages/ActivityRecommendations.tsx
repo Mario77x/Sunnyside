@@ -19,107 +19,118 @@ const ActivityRecommendations = () => {
   const [isThinking, setIsThinking] = useState(false);
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customActivity, setCustomActivity] = useState({ name: '', description: '', address: '' });
+  const [isGeneratingMore, setIsGeneratingMore] = useState(false);
 
   useEffect(() => {
     if (location.state?.activity) {
-      setActivity(location.state.activity);
-      // Generate initial recommendations
-      generateRecommendations(location.state.activity);
+      const activityData = location.state.activity;
+      setActivity(activityData);
+      
+      // Check if we have existing recommendations from state
+      if (location.state?.recommendations && location.state.recommendations.length > 0) {
+        setRecommendations(location.state.recommendations);
+        if (location.state?.selectedRecommendation) {
+          setSelectedRecommendation(location.state.selectedRecommendation);
+        }
+      } else {
+        // Generate initial recommendations
+        generateRecommendations(activityData);
+      }
     } else {
       navigate('/');
     }
   }, [location, navigate]);
 
-  const generateRecommendations = (activityData) => {
-    const mockRecommendations = [
-      {
-        id: 1,
-        name: "Café de Reiger",
-        description: "Cozy neighborhood café perfect for intimate gatherings with friends and family",
-        address: "Nieuwe Leliestraat 34, 1015 SZ Amsterdam",
-        rating: 4.5,
-        priceRange: "€€",
-        category: "café",
-        image: "/placeholder.svg",
-        link: "https://example.com/cafe-de-reiger",
-        reasoning: "Perfect for your indoor social activity with great atmosphere for conversation"
-      },
-      {
-        id: 2,
-        name: "Vondelpark Pavilion",
-        description: "Beautiful outdoor venue in the heart of Vondelpark with terrace seating",
-        address: "Vondelpark 3, 1071 AA Amsterdam",
-        rating: 4.3,
-        priceRange: "€€€",
-        category: "outdoor",
-        image: "/placeholder.svg",
-        link: "https://example.com/vondelpark-pavilion",
-        reasoning: "Great outdoor option with backup indoor seating, weather-dependent"
-      },
-      {
-        id: 3,
-        name: "Brown Café 't Smalle",
-        description: "Historic Amsterdam brown café with canal-side terrace and traditional atmosphere",
-        address: "Egelantiersgracht 12, 1015 RB Amsterdam",
-        rating: 4.7,
-        priceRange: "€€",
-        category: "drinks",
-        image: "/placeholder.svg",
-        link: "https://example.com/t-smalle",
-        reasoning: "Authentic Amsterdam experience, perfect for drinks with friends"
+  const generateRecommendations = async (activityData, append = false) => {
+    try {
+      setIsThinking(true);
+      
+      // Create a query based on the activity data
+      const query = `${activityData.title} ${activityData.description || ''} ${activityData.activity_type || ''} ${activityData.weather_preference || ''}`.trim();
+      
+      const response = await apiService.getRecommendations(query, 3);
+      
+      if (response.data && response.data.success && response.data.recommendations) {
+        // Transform API recommendations to match our UI format
+        const transformedRecommendations = response.data.recommendations.map((rec, index) => ({
+          id: append ? Date.now() + index : index + 1,
+          name: rec.venue?.name || rec.title,
+          description: rec.description,
+          address: rec.venue?.address || 'Address to be determined',
+          rating: null, // Rating not available from API venue data
+          priceRange: rec.budget === 'free' ? 'Free' : rec.budget === 'low' ? '€' : rec.budget === 'medium' ? '€€' : rec.budget === 'high' ? '€€€' : '€€',
+          category: rec.category,
+          image: rec.venue?.image_url || "/placeholder.svg",
+          link: rec.venue?.link || null,
+          reasoning: rec.tips || `Great option for ${rec.category} activities`
+        }));
+        
+        if (append) {
+          setRecommendations(prev => [...prev, ...transformedRecommendations]);
+        } else {
+          setRecommendations(transformedRecommendations);
+        }
+      } else {
+        // Fallback to mock data if API fails
+        const mockRecommendations = [
+          {
+            id: append ? Date.now() + 1 : 1,
+            name: "Café de Reiger",
+            description: "Cozy neighborhood café perfect for intimate gatherings with friends and family",
+            address: "Nieuwe Leliestraat 34, 1015 SZ Amsterdam",
+            rating: 4.5,
+            priceRange: "€€",
+            category: "café",
+            image: "/placeholder.svg",
+            link: "https://example.com/cafe-de-reiger",
+            reasoning: "Perfect for your indoor social activity with great atmosphere for conversation"
+          },
+          {
+            id: append ? Date.now() + 2 : 2,
+            name: "Vondelpark Pavilion",
+            description: "Beautiful outdoor venue in the heart of Vondelpark with terrace seating",
+            address: "Vondelpark 3, 1071 AA Amsterdam",
+            rating: 4.3,
+            priceRange: "€€€",
+            category: "outdoor",
+            image: "/placeholder.svg",
+            link: "https://example.com/vondelpark-pavilion",
+            reasoning: "Great outdoor option with backup indoor seating, weather-dependent"
+          },
+          {
+            id: append ? Date.now() + 3 : 3,
+            name: "Brown Café 't Smalle",
+            description: "Historic Amsterdam brown café with canal-side terrace and traditional atmosphere",
+            address: "Egelantiersgracht 12, 1015 RB Amsterdam",
+            rating: 4.7,
+            priceRange: "€€",
+            category: "drinks",
+            image: "/placeholder.svg",
+            link: "https://example.com/t-smalle",
+            reasoning: "Authentic Amsterdam experience, perfect for drinks with friends"
+          }
+        ];
+        
+        if (append) {
+          setRecommendations(prev => [...prev, ...mockRecommendations]);
+        } else {
+          setRecommendations(mockRecommendations);
+        }
       }
-    ];
-
-    setRecommendations(mockRecommendations);
+    } catch (error) {
+      console.error('Error generating recommendations:', error);
+      showError('Failed to generate recommendations. Please try again.');
+    } finally {
+      setIsThinking(false);
+      setIsGeneratingMore(false);
+    }
   };
 
-  const handleMoreSuggestions = () => {
-    setIsThinking(true);
-  };
-
-  const handleThinkingComplete = () => {
-    setIsThinking(false);
-    // Generate new recommendations
-    const newRecommendations = [
-      {
-        id: 4,
-        name: "Restaurant Greetje",
-        description: "Modern Dutch cuisine in a warm, welcoming atmosphere",
-        address: "Peperstraat 23, 1011 TJ Amsterdam",
-        rating: 4.6,
-        priceRange: "€€€€",
-        category: "restaurant",
-        image: "/placeholder.svg",
-        link: "https://example.com/greetje",
-        reasoning: "Excellent for special family dinners with modern Dutch cuisine"
-      },
-      {
-        id: 5,
-        name: "Bloemenmarkt Café",
-        description: "Charming café near the famous flower market with outdoor seating",
-        address: "Singel 457, 1017 AW Amsterdam",
-        rating: 4.2,
-        priceRange: "€€",
-        category: "café",
-        image: "/placeholder.svg",
-        link: "https://example.com/bloemenmarkt-cafe",
-        reasoning: "Tourist-friendly location with beautiful flower market views"
-      },
-      {
-        id: 6,
-        name: "Rooftop Bar SkyLounge",
-        description: "Panoramic city views with craft cocktails and small plates",
-        address: "Oosterdoksstraat 4, 1011 DK Amsterdam",
-        rating: 4.4,
-        priceRange: "€€€€",
-        category: "rooftop",
-        image: "/placeholder.svg",
-        link: "https://example.com/skylounge",
-        reasoning: "Perfect for special occasions with stunning Amsterdam views"
-      }
-    ];
+  const handleMoreSuggestions = async () => {
+    if (isGeneratingMore || !activity) return;
     
-    setRecommendations(prev => [...prev, ...newRecommendations]);
+    setIsGeneratingMore(true);
+    await generateRecommendations(activity, true); // Pass true to append
   };
 
   const handleSelectRecommendation = (recommendation) => {
@@ -156,20 +167,41 @@ const ActivityRecommendations = () => {
 
     // Update activity in storage
     const activities = JSON.parse(localStorage.getItem('sunnyside_activities') || '[]');
-    const updatedActivities = activities.map(act => 
+    const updatedActivities = activities.map(act =>
       act.id === activity.id ? updatedActivity : act
     );
     localStorage.setItem('sunnyside_activities', JSON.stringify(updatedActivities));
 
     showSuccess('Venue selected successfully!');
-    navigate('/invite-guests', { state: { activity: updatedActivity } });
+    navigate('/invite-guests', {
+      state: {
+        activity: updatedActivity,
+        // Pass current recommendations and selection for potential back navigation
+        recommendations,
+        selectedRecommendation
+      }
+    });
   };
 
-  if (isThinking) {
+  const handleDashboardNavigation = async () => {
+    // Save current activity as draft if there's data
+    if (activity) {
+      try {
+        await apiService.saveDraft(activity);
+        showSuccess('Activity saved as draft');
+      } catch (error) {
+        // Continue to dashboard even if save fails
+        console.warn('Failed to save draft:', error);
+      }
+    }
+    navigate('/');
+  };
+
+  if (isThinking && !isGeneratingMore) {
     return (
-      <ThinkingScreen 
-        onComplete={handleThinkingComplete}
-        message="Finding more perfect activities for you..."
+      <ThinkingScreen
+        onComplete={() => setIsThinking(false)}
+        message="Finding perfect activities for you..."
       />
     );
   }
@@ -182,13 +214,13 @@ const ActivityRecommendations = () => {
       <header className="bg-white shadow-sm border-b">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center gap-4">
-            <Button 
-              variant="ghost" 
-              onClick={() => navigate('/weather-planning', { state: { activity } })}
+            <Button
+              variant="ghost"
+              onClick={handleDashboardNavigation}
               className="text-gray-600"
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
-              Back
+              Back to Dashboard
             </Button>
             <h1 className="text-xl font-semibold">Activity Recommendations</h1>
           </div>
@@ -290,14 +322,24 @@ const ActivityRecommendations = () => {
 
         {/* Action Buttons */}
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
-          <Button 
+          <Button
             onClick={handleMoreSuggestions}
             variant="outline"
             className="flex-1"
+            disabled={isGeneratingMore}
             style={{ borderColor: '#1155cc', color: '#1155cc' }}
           >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            More Suggestions
+            {isGeneratingMore ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Generating More...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Generate More Suggestions
+              </>
+            )}
           </Button>
           
           <Button 
@@ -391,14 +433,23 @@ const ActivityRecommendations = () => {
           </Card>
         )}
 
-        {/* Continue Button */}
-        <div className="flex justify-end">
-          <Button 
+        {/* Footer Buttons */}
+        <div className="flex gap-3">
+          <Button
+            variant="outline"
+            onClick={() => navigate('/weather-planning', { state: { activity } })}
+            className="flex-1"
+            style={{ borderColor: '#1155cc', color: '#1155cc' }}
+          >
+            Back
+          </Button>
+          <Button
             onClick={handleContinue}
             disabled={!selectedRecommendation}
+            className="flex-1"
             style={{ backgroundColor: '#1155cc', color: 'white' }}
           >
-            Continue to Invitations
+            Send Invites
           </Button>
         </div>
       </div>

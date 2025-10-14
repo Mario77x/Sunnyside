@@ -111,7 +111,8 @@ async def get_current_user(
         name=user["name"],
         email=user["email"],
         location=user.get("location"),
-        preferences=user.get("preferences", [])
+        preferences=user.get("preferences", []),
+        role=user.get("role", "user")
     )
 
 
@@ -128,6 +129,10 @@ async def create_user(db: AsyncIOMotorDatabase, user_data: dict) -> dict:
     # Hash the password
     user_data["hashed_password"] = get_password_hash(user_data.pop("password"))
     user_data["created_at"] = datetime.utcnow()
+    
+    # Set default role if not provided
+    if "role" not in user_data or user_data["role"] is None:
+        user_data["role"] = "user"
     
     # Insert user into database
     result = await db.users.insert_one(user_data)

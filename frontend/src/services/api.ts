@@ -23,6 +23,21 @@ export interface User {
   };
   communication_channel?: string;
   created_at: string;
+  role?: string;
+}
+
+export interface ActivitySuggestion {
+  title: string;
+  description: string;
+  category: string;
+  duration: string;
+  difficulty: string;
+  budget: string;
+  indoor_outdoor: string;
+  group_size: string;
+  weather_considerations?: string;
+  tips: string;
+  isCustom?: boolean;
 }
 
 export interface Activity {
@@ -38,6 +53,7 @@ export interface Activity {
   selected_date?: string;
   selected_days?: string[];
   weather_data?: any[];
+  suggestions?: ActivitySuggestion[];
   invitees?: Invitee[];
   created_at: string;
   updated_at: string;
@@ -128,6 +144,38 @@ export interface MarkReadResponse {
   failed_ids?: string[];
 }
 
+export interface Contact {
+  id: string;
+  user_id: string;
+  contact_user_id: string;
+  contact_name: string;
+  contact_email: string;
+  status: 'pending' | 'accepted' | 'blocked';
+  created_at: string;
+  updated_at: string;
+  nickname?: string;
+  notes?: string;
+}
+
+export interface ContactListResponse {
+  contacts: Contact[];
+  total: number;
+}
+
+export interface ContactRequest {
+  contact_email: string;
+  message?: string;
+}
+
+export interface ContactResponse {
+  action: 'accept' | 'reject';
+}
+
+export interface ContactUpdate {
+  nickname?: string;
+  notes?: string;
+}
+
 class ApiService {
   private getAuthHeaders(): HeadersInit {
     const token = localStorage.getItem('sunnyside_token');
@@ -188,6 +236,7 @@ class ApiService {
     location?: string;
     preferences?: string[];
     communication_channel?: string;
+    invitation_token?: string;
   }): Promise<ApiResponse<AuthTokens>> {
     const response = await fetch(`${API_BASE_URL}/api/v1/auth/signup`, {
       method: 'POST',
@@ -265,6 +314,16 @@ class ApiService {
     return this.handleResponse<Activity>(response);
   }
 
+  async saveDraft(activityData: Partial<Activity>): Promise<ApiResponse<Activity>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/activities/draft`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ ...activityData, status: 'draft' })
+    });
+    
+    return this.handleResponse<Activity>(response);
+  }
+
   async inviteGuests(activityId: string, inviteData: {
     invitees: Array<{ name: string; email: string }>;
     custom_message?: string;
@@ -276,6 +335,15 @@ class ApiService {
     });
     
     return this.handleResponse<{ message: string; invited_count: number }>(response);
+  }
+
+  async createTestInvite(): Promise<ApiResponse<Activity>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/activities/create-test-invite`, {
+      method: 'POST',
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<Activity>(response);
   }
 
   // Guest response endpoints (no auth required)
@@ -386,6 +454,39 @@ class ApiService {
     return this.handleResponse(response);
   }
 
+  // Activity suggestions endpoint
+  async generateSuggestions(requestData: {
+    activity_description: string;
+    date?: string;
+    indoor_outdoor_preference?: string;
+    group_size?: number;
+  }): Promise<ApiResponse<{
+    success: boolean;
+    suggestions: Array<{
+      title: string;
+      description: string;
+      category: string;
+      duration: string;
+      difficulty: string;
+      budget: string;
+      indoor_outdoor: string;
+      group_size: string;
+      weather_considerations?: string;
+      tips: string;
+    }>;
+    weather_data?: any;
+    metadata: Record<string, any>;
+    error?: string;
+  }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/llm/generate-suggestions`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(requestData)
+    });
+    
+    return this.handleResponse(response);
+  }
+
   // Notification endpoints
   async getNotifications(limit: number = 50, unreadOnly: boolean = false): Promise<ApiResponse<Notification[]>> {
     const params = new URLSearchParams({
@@ -443,6 +544,97 @@ class ApiService {
     });
     
     return this.handleResponse<{ message: string; notification_id: string }>(response);
+  }
+
+  // Contact endpoints
+  async sendContactRequest(contactRequest: ContactRequest): Promise<ApiResponse<{
+    message: string;
+    status: string;
+  }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/contacts/request`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(contactRequest)
+    });
+    
+    return this.handleResponse(response);
+  }
+
+  async acceptInvitationToken(token: string): Promise<ApiResponse<{
+    message: string;
+    inviter_name: string;
+    status: string;
+  }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/contacts/accept-invitation/${token}`, {
+      method: 'POST',
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse(response);
+  }
+
+  async getPendingInvitations(): Promise<ApiResponse<Array<{
+    id: string;
+    invitee_email: string;
+    invitee_name?: string;
+    invitation_type: string;
+    message?: string;
+    created_at: string;
+    expires_at: string;
+  }>>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/contacts/pending-invitations`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse(response);
+  }
+
+  async respondToContactRequest(contactId: string, response: ContactResponse): Promise<ApiResponse<{
+    message: string;
+    status: string;
+  }>> {
+    const apiResponse = await fetch(`${API_BASE_URL}/api/v1/contacts/${contactId}/respond`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(response)
+    });
+    
+    return this.handleResponse(apiResponse);
+  }
+
+  async getContacts(): Promise<ApiResponse<ContactListResponse>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/contacts`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<ContactListResponse>(response);
+  }
+
+  async getContactRequests(): Promise<ApiResponse<ContactListResponse>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/contacts/requests`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<ContactListResponse>(response);
+  }
+
+  async updateContact(contactId: string, contactUpdate: ContactUpdate): Promise<ApiResponse<Contact>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/contacts/${contactId}`, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(contactUpdate)
+    });
+    
+    return this.handleResponse<Contact>(response);
+  }
+
+  async removeContact(contactId: string): Promise<ApiResponse<{ message: string }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/contacts/${contactId}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<{ message: string }>(response);
   }
 
   // Health check

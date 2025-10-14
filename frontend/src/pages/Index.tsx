@@ -14,11 +14,31 @@ import { NotificationBell } from '@/components/NotificationBell';
 
 const Index = () => {
   const navigate = useNavigate();
-  const { user, isAuthenticated, logout, isLoading: authLoading } = useAuth();
+  const { user, isAuthenticated, logout, isLoading: authLoading, isProfileLoading } = useAuth();
   const [activities, setActivities] = useState<Activity[]>([]);
   const [isLoadingActivities, setIsLoadingActivities] = useState(false);
   const [backendStatus, setBackendStatus] = useState<{ status: string; db_status: string } | null>(null);
   const [backendError, setBackendError] = useState<string | null>(null);
+
+  // Debug logging for auth state changes in Index component
+  React.useEffect(() => {
+    console.log('🏠 [Index] Auth state changed:', {
+      user: user ? {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        location: user.location,
+        preferences: user.preferences,
+        hasLocation: !!user.location,
+        hasPreferences: !!user.preferences,
+        isProfileComplete: !!(user.location && user.preferences)
+      } : null,
+      isAuthenticated,
+      authLoading,
+      isProfileLoading,
+      timestamp: new Date().toISOString()
+    });
+  }, [user, isAuthenticated, authLoading, isProfileLoading]);
 
   useEffect(() => {
     // Always check backend health on component mount
@@ -62,9 +82,41 @@ const Index = () => {
   };
 
   const handleCreateActivity = () => {
+    console.log('➕ [Index] Create activity button clicked');
+    console.log('🔍 [Index] Current auth state for create activity:', {
+      user: user ? {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        location: user.location,
+        preferences: user.preferences,
+        hasLocation: !!user.location,
+        hasPreferences: !!user.preferences,
+        isProfileComplete: !!(user.location && user.preferences)
+      } : null,
+      isAuthenticated,
+      authLoading,
+      isProfileLoading,
+      timestamp: new Date().toISOString()
+    });
+
     if (!isAuthenticated) {
+      console.log('🚫 [Index] Not authenticated, navigating to /onboarding');
+      navigate('/onboarding');
+    } else if (isProfileLoading) {
+      console.log('⏳ [Index] Profile still loading, not navigating');
+      // Still loading profile data, don't navigate yet
+      return;
+    } else if (!user || !user.location || !user.preferences) {
+      console.log('🚧 [Index] Profile incomplete for create activity, navigating to /onboarding', {
+        hasUser: !!user,
+        hasLocation: !!(user?.location),
+        hasPreferences: !!(user?.preferences)
+      });
+      // User is authenticated but hasn't completed profile setup
       navigate('/onboarding');
     } else {
+      console.log('✅ [Index] Profile complete, navigating to /create-activity');
       navigate('/create-activity');
     }
   };
@@ -73,32 +125,12 @@ const Index = () => {
     if (!user) return;
 
     try {
-      // Create a test activity first
-      const testActivityData = {
-        title: "Weekend Brunch",
-        description: "Let's have a nice brunch this Sunday with good food and great company!",
-        timeframe: "Sunday morning",
-        group_size: "small group",
-        activity_type: "food",
-        weather_preference: "either",
-        selected_days: ["Sunday"]
-      };
-
-      const response = await apiService.createActivity(testActivityData);
+      // Use the new create-test-invite endpoint
+      const response = await apiService.createTestInvite();
       if (response.data) {
-        // Invite the current user as a test
-        await apiService.inviteGuests(response.data.id, {
-          invitees: [
-            { name: user.name, email: user.email },
-            { name: "Mike Chen", email: "mike@example.com" },
-            { name: "Emma Wilson", email: "emma@example.com" }
-          ],
-          custom_message: `Hi ${user.name}! I'm organizing ${testActivityData.title.toLowerCase()} and would love for you to join us. It's going to be a great time! Let me know if you're interested.`
-        });
-
         // Reload activities
         await loadActivities();
-        showSuccess('Test invitation created! Check your activities.');
+        showSuccess('Test invitation created! Check your "Invited" activities.');
       } else {
         showError(response.error || 'Failed to create test invite');
       }
@@ -339,30 +371,76 @@ const Index = () => {
               <h1 className="text-2xl font-bold">
                 <span style={{ color: '#ff9900' }}>Sunnyside</span>
               </h1>
-              {/* Backend Status Indicator */}
-              <div className="flex items-center gap-2 text-sm">
-                {backendStatus ? (
-                  <div className="flex items-center gap-1 text-green-600">
-                    <Wifi className="w-4 h-4" />
-                    <span>Backend: {backendStatus.status}</span>
-                    <span className="text-gray-500">| DB: {backendStatus.db_status}</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1 text-red-600">
-                    <WifiOff className="w-4 h-4" />
-                    <span>{backendError || 'Backend offline'}</span>
-                  </div>
-                )}
-              </div>
+              {/* Backend Status Indicator - Only show for admin users */}
+              {user?.role === 'admin' && (
+                <div className="flex items-center gap-2 text-sm">
+                  {backendStatus ? (
+                    <div className="flex items-center gap-1 text-green-600">
+                      <Wifi className="w-4 h-4" />
+                      <span>Backend: {backendStatus.status}</span>
+                      <span className="text-gray-500">| DB: {backendStatus.db_status}</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 text-red-600">
+                      <WifiOff className="w-4 h-4" />
+                      <span>{backendError || 'Backend offline'}</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-4">
               <NotificationBell />
               <Button
                 variant="ghost"
-                onClick={() => navigate('/account')}
+                onClick={() => {
+                  console.log('👋 [Index] Profile button clicked - handleProfileClick triggered');
+                  console.log('🔍 [Index] Current auth state at click time:', {
+                    user: user ? {
+                      id: user.id,
+                      name: user.name,
+                      email: user.email,
+                      location: user.location,
+                      preferences: user.preferences,
+                      hasLocation: !!user.location,
+                      hasPreferences: !!user.preferences,
+                      isProfileComplete: !!(user.location && user.preferences)
+                    } : null,
+                    isAuthenticated,
+                    authLoading,
+                    isProfileLoading,
+                    timestamp: new Date().toISOString()
+                  });
+
+                  if (isProfileLoading) {
+                    console.log('⏳ [Index] Profile still loading, not navigating');
+                    // Still loading profile data, don't navigate yet
+                    return;
+                  }
+                  if (!user || !user.location || !user.preferences) {
+                    console.log('🚧 [Index] Profile incomplete, navigating to /onboarding', {
+                      hasUser: !!user,
+                      hasLocation: !!(user?.location),
+                      hasPreferences: !!(user?.preferences)
+                    });
+                    // User is authenticated but hasn't completed profile setup
+                    navigate('/onboarding');
+                  } else {
+                    console.log('✅ [Index] Profile complete, navigating to /account');
+                    navigate('/account');
+                  }
+                }}
                 className="text-gray-600 hover:text-gray-900"
+                disabled={isProfileLoading}
               >
-                Hello, {user.name}
+                {isProfileLoading ? (
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading...
+                  </div>
+                ) : (
+                  `Hello, ${user?.name || 'User'}`
+                )}
               </Button>
               <Button
                 variant="ghost"
@@ -387,26 +465,28 @@ const Index = () => {
             New Activity
           </Button>
           
-          {/* Test Buttons */}
-          <div className="flex gap-2">
-            <Button 
-              variant="outline" 
-              onClick={createTestInvite}
-              className="text-xs"
-              style={{ borderColor: '#ff9900', color: '#ff9900' }}
-            >
-              <TestTube className="w-3 h-3 mr-1" />
-              Create Test Invite
-            </Button>
-            <Button 
-              variant="outline" 
-              onClick={() => navigate('/guest?invite=demo123')}
-              className="text-xs"
-              style={{ borderColor: '#ff9900', color: '#ff9900' }}
-            >
-              Test Guest Experience
-            </Button>
-          </div>
+          {/* Test Buttons - Only show for admin users */}
+          {user?.role === 'admin' && (
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={createTestInvite}
+                className="text-xs"
+                style={{ borderColor: '#ff9900', color: '#ff9900' }}
+              >
+                <TestTube className="w-3 h-3 mr-1" />
+                Create Test Invite
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => navigate('/guest?invite=demo123')}
+                className="text-xs"
+                style={{ borderColor: '#ff9900', color: '#ff9900' }}
+              >
+                Test Guest Experience
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Weather Widget */}

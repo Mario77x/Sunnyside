@@ -30,6 +30,23 @@ class RecommendationsRequest(BaseModel):
             }
         }
 
+class GenerateSuggestionsRequest(BaseModel):
+    """Request model for activity suggestion generation."""
+    activity_description: str = Field(..., description="Description of the activity", min_length=1, max_length=500)
+    date: Optional[str] = Field(None, description="Date for the activity (YYYY-MM-DD format)")
+    indoor_outdoor_preference: Optional[str] = Field(None, description="Indoor/outdoor preference: 'indoor', 'outdoor', 'either'")
+    group_size: Optional[int] = Field(None, description="Number of people in the group", ge=1, le=50)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "activity_description": "Fun outdoor activity with friends",
+                "date": "2024-01-20",
+                "indoor_outdoor_preference": "outdoor",
+                "group_size": 4
+            }
+        }
+
 class RiskAssessmentRequest(BaseModel):
     """Request model for risk assessment."""
     text: str = Field(..., description="Text to analyze for safety risks", min_length=1, max_length=2000)
@@ -105,6 +122,46 @@ class RecommendationsResponse(BaseModel):
                     "generated_at": "2024-01-14T10:30:00",
                     "rag_enabled": True,
                     "venues_found": 3
+                },
+                "error": None
+            }
+        }
+
+class GenerateSuggestionsResponse(BaseModel):
+    """Response model for activity suggestion generation."""
+    success: bool
+    suggestions: List[Dict[str, Any]] = Field(default_factory=list)
+    weather_data: Optional[Dict[str, Any]] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "suggestions": [
+                    {
+                        "title": "Outdoor Hiking Adventure",
+                        "description": "Explore scenic trails with friends in the local nature reserve",
+                        "category": "outdoor_sports",
+                        "duration": "3-4 hours",
+                        "difficulty": "moderate",
+                        "budget": "free",
+                        "indoor_outdoor": "outdoor",
+                        "group_size": "2-8 people",
+                        "weather_considerations": "Best on clear days with temperatures above 10°C",
+                        "tips": "Bring water, comfortable shoes, and check weather conditions"
+                    }
+                ],
+                "weather_data": {
+                    "forecast_used": True,
+                    "days_included": 8,
+                    "source": "OpenWeatherMap"
+                },
+                "metadata": {
+                    "model_used": "mistral-small-latest",
+                    "generated_at": "2024-01-14T10:30:00",
+                    "processing_version": "1.0"
                 },
                 "error": None
             }
@@ -411,6 +468,61 @@ async def assess_risk(request: RiskAssessmentRequest) -> RiskAssessmentResponse:
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error during risk assessment: {str(e)}"
+        )
+
+@router.post("/generate-suggestions", response_model=GenerateSuggestionsResponse)
+async def generate_activity_suggestions(request: GenerateSuggestionsRequest) -> GenerateSuggestionsResponse:
+    """
+    Generate activity suggestions using Mistral AI based on activity details.
+    
+    This endpoint takes activity details and generates personalized suggestions using AI.
+    It handles missing information by:
+    - Using weather forecast for the next 8 days if date is not provided
+    - Using user preferences for indoor/outdoor if preference is "either" or not specified
+    - Adapting suggestions based on group size
+    
+    Args:
+        request: GenerateSuggestionsRequest containing activity details
+        
+    Returns:
+        GenerateSuggestionsResponse with generated suggestions or error information
+        
+    Raises:
+        HTTPException: If the request is invalid or processing fails
+    """
+    try:
+        # Validate input
+        if not request.activity_description or not request.activity_description.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Activity description cannot be empty"
+            )
+        
+        # Generate suggestions using the LLM service
+        result = await llm_service.generate_activity_suggestions(
+            activity_description=request.activity_description.strip(),
+            date=request.date,
+            indoor_outdoor_preference=request.indoor_outdoor_preference,
+            group_size=request.group_size
+        )
+        
+        # Return the result
+        return GenerateSuggestionsResponse(
+            success=result.get("success", False),
+            suggestions=result.get("suggestions", []),
+            weather_data=result.get("weather_data"),
+            metadata=result.get("metadata", {}),
+            error=result.get("error")
+        )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Handle unexpected errors
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error while generating suggestions: {str(e)}"
         )
 
 @router.post("/test-risk-assessment")

@@ -249,15 +249,45 @@ Important rules:
             # Try to extract JSON from the response
             # Remove any markdown formatting
             cleaned_content = response_content.strip()
-            if cleaned_content.startswith("```json"):
+            
+            # Handle markdown code blocks
+            if "```json" in cleaned_content:
+                # Extract content between ```json and ```
+                start_marker = "```json"
+                end_marker = "```"
+                start_idx = cleaned_content.find(start_marker)
+                if start_idx != -1:
+                    start_idx += len(start_marker)
+                    end_idx = cleaned_content.find(end_marker, start_idx)
+                    if end_idx != -1:
+                        cleaned_content = cleaned_content[start_idx:end_idx].strip()
+            elif cleaned_content.startswith("```json"):
                 cleaned_content = cleaned_content[7:]
-            if cleaned_content.endswith("```"):
-                cleaned_content = cleaned_content[:-3]
-            cleaned_content = cleaned_content.strip()
+                if cleaned_content.endswith("```"):
+                    cleaned_content = cleaned_content[:-3]
+                cleaned_content = cleaned_content.strip()
+            elif cleaned_content.startswith("```") and cleaned_content.endswith("```"):
+                cleaned_content = cleaned_content[3:-3].strip()
             
             return json.loads(cleaned_content)
         except json.JSONDecodeError:
-            # Try to find JSON within the response
+            # Try to find JSON within the response using regex
+            json_patterns = [
+                r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # Simple nested JSON
+                r'\{.*?\}',  # Basic JSON pattern
+            ]
+            
+            for pattern in json_patterns:
+                json_matches = re.findall(pattern, response_content, re.DOTALL)
+                for match in json_matches:
+                    try:
+                        parsed = json.loads(match)
+                        if isinstance(parsed, dict):
+                            return parsed
+                    except json.JSONDecodeError:
+                        continue
+            
+            # Try to extract the largest JSON-like structure
             json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
             if json_match:
                 try:
@@ -266,7 +296,7 @@ Important rules:
                     pass
             
             # If all else fails, return a basic structure
-            raise ValueError(f"Could not parse JSON from response: {response_content}")
+            raise ValueError(f"Could not parse JSON from response: {response_content[:200]}...")
     
     def _validate_and_enhance_intent(self, parsed_intent: Dict[str, Any]) -> Dict[str, Any]:
         """Validate and enhance the parsed intent with additional processing."""
@@ -658,6 +688,193 @@ Please provide {max_results} activity recommendations in the following JSON form
 Make the recommendations creative, engaging, and tailored to the user's query while drawing inspiration from the provided activities. Ensure all recommendations are safe."""
 
         return prompt
+
+    async def generate_activity_suggestions(
+        self,
+        activity_description: str,
+        date: Optional[str] = None,
+        indoor_outdoor_preference: Optional[str] = None,
+        group_size: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate activity suggestions based on activity details, handling missing information.
+        
+        Args:
+            activity_description: Description of the activity
+            date: Optional date for the activity (YYYY-MM-DD format)
+            indoor_outdoor_preference: Optional indoor/outdoor preference
+            group_size: Optional number of people in the group
+            
+        Returns:
+            Dict containing suggestions and metadata
+        """
+        try:
+            # First, perform risk assessment on the activity description
+            risk_assessment = await risk_assessment_service.analyze_text(activity_description)
+            
+            # If content is flagged as unsafe, return error immediately
+            if not risk_assessment_service.is_content_safe(risk_assessment):
+                safety_message = risk_assessment_service.get_safety_message(risk_assessment)
+                return {
+                    "success": False,
+                    "error": safety_message,
+                    "suggestions": [],
+                    "risk_assessment": risk_assessment,
+                    "metadata": {
+                        "model_used": self.model,
+                        "generated_at": datetime.now().isoformat(),
+                        "blocked_for_safety": True
+                    }
+                }
+            
+            # Handle missing date information - get weather forecast for next 8 days
+            weather_data = None
+            weather_context = ""
+            if not date:
+                try:
+                    # Use default coordinates (Amsterdam) - in a real app, this would come from user location
+                    from .weather import weather_service
+                    weather_forecast = await weather_service.get_weather_forecast(52.3676, 4.9041, 8)
+                    weather_data = {
+                        "forecast_used": True,
+                        "days_included": 8,
+                        "source": weather_forecast.get("source", "Weather Service")
+                    }
+                    
+                    # Create weather context for the prompt
+                    if weather_forecast.get("forecasts"):
+                        weather_context = "\n\nWEATHER FORECAST FOR NEXT 8 DAYS:\n"
+                        for forecast in weather_forecast["forecasts"][:8]:
+                            weather_context += f"- {forecast.get('date')}: {forecast.get('weather_description', 'Unknown')}, "
+                            weather_context += f"High: {forecast.get('temperature_max', 'N/A')}°C, "
+                            weather_context += f"Low: {forecast.get('temperature_min', 'N/A')}°C, "
+                            weather_context += f"Rain chance: {forecast.get('precipitation_probability', 0)}%\n"
+                except Exception as e:
+                    print(f"Warning: Could not fetch weather data: {e}")
+                    weather_data = {"forecast_used": False, "error": str(e)}
+            
+            # Handle indoor/outdoor preference
+            preference_context = ""
+            if indoor_outdoor_preference == "either" or not indoor_outdoor_preference:
+                # In a real app, this would come from user profile preferences
+                # For now, we'll mention both options
+                preference_context = "\n\nINDOOR/OUTDOOR PREFERENCE: Consider both indoor and outdoor options since no specific preference was provided."
+            else:
+                preference_context = f"\n\nINDOOR/OUTDOOR PREFERENCE: Focus on {indoor_outdoor_preference} activities."
+            
+            # Handle group size
+            group_context = ""
+            if group_size:
+                group_context = f"\n\nGROUP SIZE: Plan for {group_size} people."
+            else:
+                group_context = "\n\nGROUP SIZE: Group size not specified - provide suggestions that work for various group sizes."
+            
+            # Create enhanced prompt for activity suggestions
+            suggestion_prompt = f"""You are a helpful activity planning assistant. Based on the activity description and context provided, generate 3-5 creative and personalized activity suggestions.
+
+ACTIVITY DESCRIPTION: "{activity_description}"
+
+CONTEXT:
+{weather_context}
+{preference_context}
+{group_context}
+
+SAFETY GUIDELINES:
+- Only recommend safe, legal activities
+- Consider weather conditions if provided
+- Ensure activities are appropriate for the group size
+- Include practical considerations and tips
+
+Please provide suggestions in the following JSON format:
+{{
+    "suggestions": [
+        {{
+            "title": "Activity Title",
+            "description": "Detailed description of the activity",
+            "category": "activity category (e.g., outdoor_sports, dining, entertainment, cultural)",
+            "duration": "estimated duration",
+            "difficulty": "easy/moderate/challenging",
+            "budget": "free/low/medium/high",
+            "indoor_outdoor": "indoor/outdoor/either",
+            "group_size": "recommended group size or range",
+            "weather_considerations": "weather-related notes if applicable",
+            "tips": "helpful tips or considerations"
+        }}
+    ]
+}}
+
+Make the suggestions creative, engaging, and tailored to the provided context. Consider the weather forecast if provided."""
+            
+            # Generate suggestions using Mistral AI
+            response = self.client.chat(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": suggestion_prompt
+                    }
+                ],
+                temperature=0.7,  # Balanced creativity and consistency
+                max_tokens=1500
+            )
+            
+            # Extract and parse the response
+            if response and response.choices and len(response.choices) > 0:
+                response_content = response.choices[0].message.content
+                
+                # Try to parse as JSON
+                try:
+                    suggestions_data = self._parse_json_response(response_content)
+                    if isinstance(suggestions_data, dict) and 'suggestions' in suggestions_data:
+                        return {
+                            "success": True,
+                            "suggestions": suggestions_data['suggestions'],
+                            "weather_data": weather_data,
+                            "risk_assessment": risk_assessment,
+                            "metadata": {
+                                "model_used": self.model,
+                                "generated_at": datetime.now().isoformat(),
+                                "processing_version": "1.0",
+                                "weather_included": bool(weather_context),
+                                "preference_handled": bool(preference_context),
+                                "group_size_considered": bool(group_size)
+                            }
+                        }
+                except Exception as parse_error:
+                    print(f"JSON parsing failed: {parse_error}")
+                    # Fallback to text response
+                    pass
+                
+                # Return as text response if JSON parsing fails
+                return {
+                    "success": True,
+                    "suggestions": [{"description": response_content, "type": "text_response"}],
+                    "weather_data": weather_data,
+                    "risk_assessment": risk_assessment,
+                    "metadata": {
+                        "model_used": self.model,
+                        "generated_at": datetime.now().isoformat(),
+                        "response_format": "text",
+                        "weather_included": bool(weather_context)
+                    }
+                }
+            
+            return {
+                "success": False,
+                "error": "No response from LLM",
+                "suggestions": [],
+                "weather_data": weather_data,
+                "risk_assessment": risk_assessment
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Error generating activity suggestions: {str(e)}",
+                "suggestions": [],
+                "weather_data": weather_data if 'weather_data' in locals() else None,
+                "fallback": True
+            }
 
 # Global instance
 llm_service = LLMService()

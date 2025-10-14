@@ -17,6 +17,8 @@ from backend.models.activity import (
 )
 from backend.models.user import UserResponse
 from backend.auth import get_current_user, security
+from backend.services.notifications import NotificationService
+from backend.utils.environment import get_invite_link
 
 router = APIRouter(prefix="/activities", tags=["activities"])
 
@@ -77,6 +79,7 @@ def convert_activity_to_response(activity: dict) -> ActivityResponse:
         selected_date=activity.get("selected_date"),
         selected_days=activity.get("selected_days", []),
         weather_data=activity.get("weather_data", []),
+        suggestions=activity.get("suggestions", []),
         invitees=activity.get("invitees", []),
         created_at=activity["created_at"],
         updated_at=activity["updated_at"]
@@ -351,10 +354,67 @@ async def invite_guests_to_activity(
             }
         )
         
+        # Send email invitations to all new invitees
+        # Temporary solution, sending links to local env during PoC testing, to be removed before launch
+        notification_service = NotificationService()
+        email_results = []
+        
+        for invitee in new_invitees:
+            # Generate invite link for this specific invitee
+            invite_link = get_invite_link(activity_id, invitee["email"])
+            
+            # Prepare activity details for email
+            activity_details = {
+                "selected_date": activity.get("selected_date"),
+                "selected_days": activity.get("selected_days", []),
+                "weather_preference": activity.get("weather_preference"),
+                "group_size": activity.get("group_size"),
+                "suggestions": activity.get("suggestions", []),
+                "weather_data": activity.get("weather_data", [])
+            }
+            
+            # Send email invitation
+            email_sent = await notification_service.send_activity_invitation_email(
+                to_email=invitee["email"],
+                to_name=invitee["name"],
+                organizer_name=current_user.name,
+                activity_title=activity["title"],
+                activity_description=activity.get("description", ""),
+                custom_message=invite_request.custom_message,
+                invite_link=invite_link,
+                activity_details=activity_details
+            )
+            
+            email_results.append({
+                "email": invitee["email"],
+                "name": invitee["name"],
+                "email_sent": email_sent
+            })
+            
+            # Also create in-app notification if the invitee is a registered user
+            existing_user = await db.users.find_one({"email": invitee["email"]})
+            if existing_user:
+                await notification_service.create_notification(
+                    db,
+                    str(existing_user["_id"]),
+                    f"{current_user.name} invited you to {activity['title']}",
+                    "activity_invitation",
+                    {
+                        "activity_id": activity_id,
+                        "organizer_name": current_user.name,
+                        "activity_title": activity["title"],
+                        "invite_link": invite_link
+                    }
+                )
+        
+        successful_emails = sum(1 for result in email_results if result["email_sent"])
+        
         return {
             "message": "Invitations sent",
             "invited_count": len(new_invitees),
-            "custom_message": invite_request.custom_message
+            "emails_sent": successful_emails,
+            "custom_message": invite_request.custom_message,
+            "email_results": email_results
         }
         
     except HTTPException:
@@ -363,4 +423,93 @@ async def invite_guests_to_activity(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to send invitations: {str(e)}"
+        )
+
+
+@router.post("/create-test-invite", response_model=ActivityResponse)
+async def create_test_invite(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Create a test invite where the current user is invited by a mock organizer.
+    
+    This creates an activity with a mock organizer and adds the current user as an invitee,
+    ensuring the activity appears in the user's "invited" list instead of "organized" list.
+    """
+    try:
+        # Get current user
+        current_user = await get_current_user(credentials, db)
+        
+        # Create or get a mock organizer user
+        mock_organizer_email = "test.organizer@sunnyside.app"
+        mock_organizer = await db.users.find_one({"email": mock_organizer_email})
+        
+        if not mock_organizer:
+            # Create mock organizer user
+            mock_organizer_data = {
+                "name": "Test Organizer",
+                "email": mock_organizer_email,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }
+            result = await db.users.insert_one(mock_organizer_data)
+            mock_organizer_id = result.inserted_id
+        else:
+            mock_organizer_id = mock_organizer["_id"]
+        
+        # Prepare test activity data with mock organizer
+        activity_data = {
+            "organizer_id": mock_organizer_id,
+            "title": "Weekend Brunch",
+            "description": "Let's have a nice brunch this Sunday with good food and great company!",
+            "status": ActivityStatus.INVITATIONS_SENT,
+            "timeframe": "Sunday morning",
+            "group_size": "small group",
+            "activity_type": "food",
+            "weather_preference": "either",
+            "selected_days": ["Sunday"],
+            "invitees": [
+                {
+                    "id": current_user.id,
+                    "name": current_user.name,
+                    "email": current_user.email,
+                    "response": InviteeResponse.PENDING.value,
+                    "availability_note": None,
+                    "venue_suggestion": None,
+                    "preferences": {}
+                },
+                {
+                    "id": str(ObjectId()),
+                    "name": "Mike Chen",
+                    "email": "mike@example.com",
+                    "response": InviteeResponse.PENDING.value,
+                    "availability_note": None,
+                    "venue_suggestion": None,
+                    "preferences": {}
+                },
+                {
+                    "id": str(ObjectId()),
+                    "name": "Emma Wilson",
+                    "email": "emma@example.com",
+                    "response": InviteeResponse.PENDING.value,
+                    "availability_note": None,
+                    "venue_suggestion": None,
+                    "preferences": {}
+                }
+            ]
+        }
+        
+        # Create activity in database
+        created_activity = await create_activity_in_db(db, activity_data)
+        
+        # Convert to response model
+        return convert_activity_to_response(created_activity)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create test invite: {str(e)}"
         )

@@ -1,18 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useNavigate } from 'react-router-dom';
-import { ArrowRight, MapPin, User, Heart, Loader2 } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowRight, MapPin, User, Heart, Loader2, UserPlus } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { showError, showSuccess } from '@/utils/toast';
 
 const Onboarding = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [step, setStep] = useState(1);
+  const [invitationToken, setInvitationToken] = useState<string | null>(null);
+  const [isInvitedUser, setIsInvitedUser] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -32,6 +35,16 @@ const Onboarding = () => {
   });
   const { signup, isLoading } = useAuth();
 
+  // Check for invitation token in URL parameters
+  useEffect(() => {
+    const token = searchParams.get('token');
+    if (token) {
+      setInvitationToken(token);
+      setIsInvitedUser(true);
+      showSuccess('Welcome! Complete your signup to connect with your friend.');
+    }
+  }, [searchParams]);
+
   const handleNext = async () => {
     if (step < 4) {
       setStep(step + 1);
@@ -49,7 +62,8 @@ const Onboarding = () => {
           password: formData.password,
           location: formData.location,
           preferences: selectedPreferences,
-          communication_channel: formData.communicationChannel
+          communication_channel: formData.communicationChannel,
+          invitation_token: invitationToken || undefined
         });
 
         if (result.success) {
@@ -97,7 +111,17 @@ const Onboarding = () => {
           <h1 className="text-3xl font-bold mb-2">
             <span style={{ color: '#ff9900' }}>Sunnyside</span>
           </h1>
-          <p className="text-gray-600">Let's get you started</p>
+          {isInvitedUser ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-center gap-2 text-blue-600">
+                <UserPlus className="w-5 h-5" />
+                <span className="font-medium">You've been invited!</span>
+              </div>
+              <p className="text-gray-600">Complete your signup to join your friend</p>
+            </div>
+          ) : (
+            <p className="text-gray-600">Let's get you started</p>
+          )}
         </div>
 
         {/* Progress Indicator */}
