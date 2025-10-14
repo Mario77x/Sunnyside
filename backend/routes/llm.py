@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from ..services.llm import llm_service
 
 router = APIRouter(prefix="/llm", tags=["llm"])
@@ -13,6 +13,63 @@ class ParseIntentRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "text": "Let's go for a bike ride tomorrow afternoon"
+            }
+        }
+
+class RecommendationsRequest(BaseModel):
+    """Request model for activity recommendations."""
+    query: str = Field(..., description="User query for activity recommendations", min_length=1, max_length=500)
+    max_results: int = Field(default=5, description="Maximum number of recommendations to return", ge=1, le=10)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "query": "something fun to do outdoors",
+                "max_results": 5
+            }
+        }
+
+class RecommendationsResponse(BaseModel):
+    """Response model for activity recommendations."""
+    success: bool
+    recommendations: List[Dict[str, Any]] = Field(default_factory=list)
+    query: str = ""
+    retrieved_activities: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "recommendations": [
+                    {
+                        "title": "Scenic Park Bike Ride",
+                        "description": "Enjoy a leisurely bike ride through the local park with beautiful scenery",
+                        "category": "outdoor_sports",
+                        "duration": "2-3 hours",
+                        "difficulty": "moderate",
+                        "budget": "free",
+                        "indoor_outdoor": "outdoor",
+                        "group_size": "1-6 people",
+                        "tips": "Bring water and wear comfortable clothing",
+                        "venue": {
+                            "name": "Central Park Trail",
+                            "address": "123 Park Avenue",
+                            "link": "https://maps.google.com/central-park-trail",
+                            "image_url": "https://example.com/park-trail.jpg"
+                        }
+                    }
+                ],
+                "query": "something fun to do outdoors",
+                "retrieved_activities": 3,
+                "metadata": {
+                    "model_used": "mistral-small-latest",
+                    "generated_at": "2024-01-14T10:30:00",
+                    "rag_enabled": True,
+                    "venues_found": 3
+                },
+                "error": None
             }
         }
 
@@ -174,5 +231,91 @@ async def test_parse_intent():
         return ParseIntentResponse(
             success=False,
             data={},
+            error=str(e)
+        )
+
+@router.post("/recommendations", response_model=RecommendationsResponse)
+async def get_activity_recommendations(request: RecommendationsRequest) -> RecommendationsResponse:
+    """
+    Get activity recommendations using RAG pipeline.
+    
+    This endpoint takes a user's query and returns personalized activity recommendations
+    using a Retrieval-Augmented Generation (RAG) approach. It searches through a knowledge
+    base of activities and uses an LLM to generate creative, relevant suggestions.
+    
+    Args:
+        request: RecommendationsRequest containing the user's query and preferences
+        
+    Returns:
+        RecommendationsResponse with generated recommendations or error information
+        
+    Raises:
+        HTTPException: If the request is invalid or processing fails
+    """
+    try:
+        # Validate input
+        if not request.query or not request.query.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Query cannot be empty"
+            )
+        
+        # Get recommendations using the LLM service
+        result = await llm_service.get_recommendations(
+            query=request.query.strip(),
+            max_results=request.max_results
+        )
+        
+        # Return the result
+        return RecommendationsResponse(
+            success=result.get("success", False),
+            recommendations=result.get("recommendations", []),
+            query=result.get("query", request.query),
+            retrieved_activities=result.get("retrieved_activities", 0),
+            metadata=result.get("metadata", {}),
+            error=result.get("error")
+        )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Handle unexpected errors
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error while generating recommendations: {str(e)}"
+        )
+
+@router.post("/test-recommendations")
+async def test_recommendations():
+    """
+    Test endpoint for recommendations with a sample query.
+    
+    Returns:
+        RecommendationsResponse with results from a sample query
+    """
+    sample_query = "something fun to do outdoors with friends"
+    
+    try:
+        result = await llm_service.get_recommendations(
+            query=sample_query,
+            max_results=3
+        )
+        
+        return RecommendationsResponse(
+            success=result.get("success", False),
+            recommendations=result.get("recommendations", []),
+            query=result.get("query", sample_query),
+            retrieved_activities=result.get("retrieved_activities", 0),
+            metadata=result.get("metadata", {}),
+            error=result.get("error")
+        )
+    except Exception as e:
+        return RecommendationsResponse(
+            success=False,
+            recommendations=[],
+            query=sample_query,
+            retrieved_activities=0,
+            metadata={},
             error=str(e)
         )
