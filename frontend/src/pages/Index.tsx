@@ -10,6 +10,7 @@ import { calculateDeadline } from '@/utils/deadlineCalculator';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService, Activity } from '@/services/api';
 import WeatherWidget from '@/components/WeatherWidget';
+import { NotificationBell } from '@/components/NotificationBell';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -355,6 +356,7 @@ const Index = () => {
               </div>
             </div>
             <div className="flex items-center gap-4">
+              <NotificationBell />
               <Button
                 variant="ghost"
                 onClick={() => navigate('/account')}

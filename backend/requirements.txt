@@ -12,3 +12,4 @@ httpx==0.25.2
 mistralai==0.4.2
 chromadb==0.4.18
 sentence-transformers==2.2.2
+sendgrid==6.10.0

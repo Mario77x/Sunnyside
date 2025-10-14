@@ -103,6 +103,31 @@ export interface AuthTokens {
   token_type: string;
 }
 
+export interface Notification {
+  id: string;
+  user_id: string;
+  message: string;
+  timestamp: string;
+  read: boolean;
+  notification_type: string;
+  metadata?: Record<string, any>;
+}
+
+export interface UnreadCountResponse {
+  unread_count: number;
+}
+
+export interface MarkReadRequest {
+  notification_ids?: string[];
+}
+
+export interface MarkReadResponse {
+  message: string;
+  marked_count: number;
+  total_requested?: number;
+  failed_ids?: string[];
+}
+
 class ApiService {
   private getAuthHeaders(): HeadersInit {
     const token = localStorage.getItem('sunnyside_token');
@@ -338,6 +363,65 @@ class ApiService {
     });
     
     return this.handleResponse(response);
+  }
+
+  // Notification endpoints
+  async getNotifications(limit: number = 50, unreadOnly: boolean = false): Promise<ApiResponse<Notification[]>> {
+    const params = new URLSearchParams({
+      limit: limit.toString(),
+      unread_only: unreadOnly.toString()
+    });
+    
+    const response = await fetch(`${API_BASE_URL}/api/v1/notifications?${params}`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<Notification[]>(response);
+  }
+
+  async getUnreadNotificationsCount(): Promise<ApiResponse<UnreadCountResponse>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/notifications/unread-count`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<UnreadCountResponse>(response);
+  }
+
+  async markNotificationsRead(notificationIds?: string[]): Promise<ApiResponse<MarkReadResponse>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/notifications/mark-read`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ notification_ids: notificationIds })
+    });
+    
+    return this.handleResponse<MarkReadResponse>(response);
+  }
+
+  async markSingleNotificationRead(notificationId: string): Promise<ApiResponse<{ message: string }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/notifications/${notificationId}/mark-read`, {
+      method: 'PUT',
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<{ message: string }>(response);
+  }
+
+  async deleteNotification(notificationId: string): Promise<ApiResponse<{ message: string }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/notifications/${notificationId}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<{ message: string }>(response);
+  }
+
+  async createTestNotification(): Promise<ApiResponse<{ message: string; notification_id: string }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/notifications/create-test-notification`, {
+      method: 'POST',
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<{ message: string; notification_id: string }>(response);
   }
 
   // Health check
