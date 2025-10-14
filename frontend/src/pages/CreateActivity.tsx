@@ -395,7 +395,7 @@ const CreateActivity = () => {
               <CardHeader>
                 <CardTitle>I understood your idea!</CardTitle>
                 <CardDescription>
-                  Here's what I gathered from your description. Please select a date and edit any details before proceeding.
+                  Here's what I gathered from your description. Please check and edit if needed.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">

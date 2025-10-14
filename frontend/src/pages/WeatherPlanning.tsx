@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Cloud, Sun, CloudRain, Calendar as CalendarIcon, ThumbsUp, AlertTriangle, Info, Users, Loader2, CloudSnow, Zap, Eye, CloudDrizzle } from 'lucide-react';
 import { format } from 'date-fns';
-import { showError } from '@/utils/toast';
+import { showError, showSuccess } from '@/utils/toast';
 import ThinkingScreen from '@/components/ThinkingScreen';
 import { apiService } from '@/services/api';
 
@@ -272,28 +272,11 @@ const WeatherPlanning = () => {
     
     const updatedActivity = {
       ...activity,
-      selectedDate: selectedDate?.toISOString(),
-      weatherPreference,
-      groupSize,
-      selectedDays: selectedDays.length > 0 ? selectedDays : [activity.timeframe],
-      weatherData,
-      status: 'weather-planned'
-    };
-    
-    // Show thinking screen before going to invitations
-    setIsThinking(true);
-  };
-
-  const handleThinkingComplete = () => {
-    setIsThinking(false);
-    setIsSubmitting(false);
-    const updatedActivity = {
-      ...activity,
-      selectedDate: selectedDate?.toISOString(),
-      weatherPreference,
-      groupSize,
-      selectedDays: selectedDays.length > 0 ? selectedDays : [activity.timeframe],
-      weatherData,
+      selected_date: selectedDate?.toISOString(),
+      weather_preference: weatherPreference,
+      group_size: groupSize,
+      selected_days: selectedDays.length > 0 ? selectedDays : [activity.timeframe],
+      weather_data: weatherData,
       status: 'weather-planned'
     };
     
@@ -304,7 +287,29 @@ const WeatherPlanning = () => {
     );
     localStorage.setItem('sunnyside_activities', JSON.stringify(updatedActivities));
     
-    navigate('/create-activity', { state: { activity: updatedActivity, step: 'suggestions-pre-invites' } });
+    // Navigate directly to activity recommendations
+    navigate('/activity-recommendations', { state: { activity: updatedActivity } });
+    setIsSubmitting(false);
+  };
+
+  const handleThinkingComplete = () => {
+    // This function is no longer needed since we're not using the thinking screen
+    setIsThinking(false);
+    setIsSubmitting(false);
+  };
+
+  const handleDashboardNavigation = async () => {
+    // Save current activity as draft if there's data
+    if (activity) {
+      try {
+        await apiService.saveDraft(activity);
+        showSuccess('Activity saved as draft');
+      } catch (error) {
+        // Continue to dashboard even if save fails
+        console.warn('Failed to save draft:', error);
+      }
+    }
+    navigate('/');
   };
 
   if (isThinking) {
@@ -328,7 +333,7 @@ const WeatherPlanning = () => {
           <div className="flex items-center gap-4">
             <Button
               variant="ghost"
-              onClick={() => navigate('/create-activity')}
+              onClick={handleDashboardNavigation}
               className="text-gray-600"
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
@@ -556,10 +561,7 @@ const WeatherPlanning = () => {
                   Processing...
                 </>
               ) : (
-                <>
-                  Activity Suggestions
-                  <Users className="w-4 h-4 ml-2" />
-                </>
+                "Activity Suggestions"
               )}
             </Button>
           </div>

@@ -456,13 +456,7 @@ const InviteGuests = () => {
           <div className="flex gap-3">
             <Button
               variant="outline"
-              onClick={() => navigate('/activity-recommendations', {
-                state: {
-                  activity,
-                  recommendations: location.state?.recommendations,
-                  selectedRecommendation: location.state?.selectedRecommendation
-                }
-              })}
+              onClick={() => navigate('/activity-recommendations', { state: { activity } })}
               className="flex-1"
               style={{ borderColor: '#1155cc', color: '#1155cc' }}
             >
@@ -482,19 +476,11 @@ const InviteGuests = () => {
               ) : (
                 <>
                   <Send className="w-4 h-4 mr-2" />
-                  Save and send invites
+                  Next
                 </>
               )}
             </Button>
           </div>
-          <Button
-            variant="outline"
-            onClick={handleDashboardNavigation}
-            className="w-full"
-            style={{ borderColor: '#6b7280', color: '#6b7280' }}
-          >
-            Back to dashboard
-          </Button>
         </div>
       </div>
     </div>

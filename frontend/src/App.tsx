@@ -9,7 +9,6 @@ import Login from "./pages/Login";
 import Onboarding from "./pages/Onboarding";
 import CreateActivity from "./pages/CreateActivity";
 import WeatherPlanning from "./pages/WeatherPlanning";
-import ActivityRecommendations from "./pages/ActivityRecommendations";
 import InviteGuests from "./pages/InviteGuests";
 import GuestResponse from "./pages/GuestResponse";
 import InviteeResponse from "./pages/InviteeResponse";
@@ -18,6 +17,8 @@ import VenuePoll from "./pages/VenuePoll";
 import PostActivityFeedback from "./pages/PostActivityFeedback";
 import Account from "./pages/Account";
 import ActivitySummary from "./pages/ActivitySummary";
+import ActivityRecommendations from "./pages/ActivityRecommendations";
+import ActivitySuggestions from "./pages/ActivitySuggestions";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -36,6 +37,7 @@ const App = () => (
             <Route path="/create-activity" element={<CreateActivity />} />
             <Route path="/weather-planning" element={<WeatherPlanning />} />
             <Route path="/activity-recommendations" element={<ActivityRecommendations />} />
+            <Route path="/activity-suggestions" element={<ActivitySuggestions />} />
             <Route path="/invite-guests" element={<InviteGuests />} />
             <Route path="/guest" element={<GuestResponse />} />
             <Route path="/invitee-response" element={<InviteeResponse />} />

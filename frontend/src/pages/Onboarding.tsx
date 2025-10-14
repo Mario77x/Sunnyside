@@ -323,15 +323,6 @@ const Onboarding = () => {
           </CardContent>
         </Card>
 
-        <div className="text-center mt-6">
-          <Button 
-            variant="ghost" 
-            onClick={() => navigate('/')}
-            className="text-gray-600"
-          >
-            Skip for now
-          </Button>
-        </div>
       </div>
     </div>
   );

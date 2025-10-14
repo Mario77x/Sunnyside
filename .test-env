@@ -1,0 +1,12 @@
+# Test Environment Variables (NOT COMMITTED)
+# For development and testing purposes only
+
+TEST_PORT=5137
+TEST_EMAIL=test@example.com
+TEST_PASSWORD=password123
+TEST_USER_NAME=Test User
+
+# Notes:
+# - Frontend runs on port 5137
+# - Backend runs on port 8000
+# - Use these credentials for testing authentication flows
