@@ -7,6 +7,7 @@ import re
 import httpx
 import asyncio
 from urllib.parse import quote_plus
+from .risk_assessment import risk_assessment_service
 # import chromadb
 # from sentence_transformers import SentenceTransformer
 # from ..data.activities import get_activities_for_embedding
@@ -89,6 +90,41 @@ class LLMService:
             Dict containing structured information about the intended activity
         """
         try:
+            # First, perform risk assessment on the user input
+            risk_assessment = await risk_assessment_service.analyze_text(user_input)
+            
+            # If content is flagged as unsafe, return error immediately
+            if not risk_assessment_service.is_content_safe(risk_assessment):
+                safety_message = risk_assessment_service.get_safety_message(risk_assessment)
+                return {
+                    "success": False,
+                    "error": safety_message,
+                    "risk_assessment": risk_assessment,
+                    "activity": {
+                        "type": "blocked",
+                        "description": "Content blocked for safety",
+                        "confidence": 0.0
+                    },
+                    "datetime": {
+                        "date": None,
+                        "time": None,
+                        "duration": None,
+                        "flexibility": "flexible"
+                    },
+                    "location": {
+                        "type": "unspecified",
+                        "details": None,
+                        "indoor_outdoor": "unknown"
+                    },
+                    "participants": {
+                        "count": None,
+                        "type": "unknown"
+                    },
+                    "requirements": [],
+                    "mood": "neutral"
+                }
+            
+            # If content is safe, proceed with intent parsing
             prompt = self._create_intent_parsing_prompt(user_input)
             
             response = self.client.chat(
@@ -110,7 +146,12 @@ class LLMService:
             parsed_intent = self._parse_json_response(response_content)
             
             # Post-process and validate the response
-            return self._validate_and_enhance_intent(parsed_intent)
+            result = self._validate_and_enhance_intent(parsed_intent)
+            
+            # Add risk assessment metadata to the result
+            result["risk_assessment"] = risk_assessment
+            
+            return result
             
         except Exception as e:
             # Return a fallback structure if parsing fails
@@ -409,6 +450,27 @@ Important rules:
             Dict containing recommendations and metadata
         """
         try:
+            # First, perform risk assessment on the user query
+            risk_assessment = await risk_assessment_service.analyze_text(query)
+            
+            # If content is flagged as unsafe, return error immediately
+            if not risk_assessment_service.is_content_safe(risk_assessment):
+                safety_message = risk_assessment_service.get_safety_message(risk_assessment)
+                return {
+                    "success": False,
+                    "error": safety_message,
+                    "recommendations": [],
+                    "query": query,
+                    "risk_assessment": risk_assessment,
+                    "retrieved_activities": 0,
+                    "metadata": {
+                        "model_used": self.model,
+                        "generated_at": datetime.now().isoformat(),
+                        "blocked_for_safety": True
+                    }
+                }
+            
+            # If content is safe, proceed with recommendations
             # Step 1: Generate initial activity idea using LLM
             initial_prompt = f"""Based on the user query "{query}", suggest ONE specific activity type that would be most relevant.
             
@@ -499,11 +561,12 @@ Make the recommendations creative, engaging, and tailored to the user's query. I
                 try:
                     recommendations_data = self._parse_json_response(response_content)
                     if isinstance(recommendations_data, dict) and 'recommendations' in recommendations_data:
-                        return {
+                        result = {
                             "success": True,
                             "recommendations": recommendations_data['recommendations'],
                             "query": query,
                             "retrieved_activities": len(venues),
+                            "risk_assessment": risk_assessment,
                             "metadata": {
                                 "model_used": self.model,
                                 "generated_at": datetime.now().isoformat(),
@@ -511,6 +574,7 @@ Make the recommendations creative, engaging, and tailored to the user's query. I
                                 "venues_found": len(venues)
                             }
                         }
+                        return result
                 except:
                     # Fallback to text response
                     pass
@@ -521,6 +585,7 @@ Make the recommendations creative, engaging, and tailored to the user's query. I
                     "recommendations": [{"description": response_content, "type": "text_response"}],
                     "query": query,
                     "retrieved_activities": len(venues),
+                    "risk_assessment": risk_assessment,
                     "metadata": {
                         "model_used": self.model,
                         "generated_at": datetime.now().isoformat(),
@@ -534,7 +599,8 @@ Make the recommendations creative, engaging, and tailored to the user's query. I
                 "success": False,
                 "error": "No response from LLM",
                 "recommendations": [],
-                "query": query
+                "query": query,
+                "risk_assessment": risk_assessment
             }
             
         except Exception as e:

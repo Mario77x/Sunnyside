@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List
 from ..services.llm import llm_service
+from ..services.risk_assessment import risk_assessment_service
 
 router = APIRouter(prefix="/llm", tags=["llm"])
 
@@ -26,6 +27,42 @@ class RecommendationsRequest(BaseModel):
             "example": {
                 "query": "something fun to do outdoors",
                 "max_results": 5
+            }
+        }
+
+class RiskAssessmentRequest(BaseModel):
+    """Request model for risk assessment."""
+    text: str = Field(..., description="Text to analyze for safety risks", min_length=1, max_length=2000)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "text": "Let's plan a fun outdoor activity for the weekend"
+            }
+        }
+
+class RiskAssessmentResponse(BaseModel):
+    """Response model for risk assessment."""
+    is_safe: bool
+    risk_category: Optional[str] = None
+    confidence_score: float
+    explanation: str
+    flagged_content: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "is_safe": True,
+                "risk_category": None,
+                "confidence_score": 0.95,
+                "explanation": "Content appears safe for activity planning",
+                "flagged_content": [],
+                "metadata": {
+                    "analyzed_at": "2024-01-14T10:30:00",
+                    "model_used": "mistral-small-latest",
+                    "service_version": "1.0"
+                }
             }
         }
 
@@ -319,3 +356,98 @@ async def test_recommendations():
             metadata={},
             error=str(e)
         )
+
+@router.post("/assess-risk", response_model=RiskAssessmentResponse)
+async def assess_risk(request: RiskAssessmentRequest) -> RiskAssessmentResponse:
+    """
+    Assess text content for safety risks and harmful intent.
+    
+    This endpoint analyzes user input for potentially harmful content including:
+    - Hate speech and discrimination
+    - Violence and threats
+    - Self-harm content
+    - Illegal activities
+    - Harassment and bullying
+    - Inappropriate sexual content
+    - Dangerous activities
+    - Misinformation
+    - Spam content
+    
+    Args:
+        request: RiskAssessmentRequest containing the text to analyze
+        
+    Returns:
+        RiskAssessmentResponse with safety assessment results
+        
+    Raises:
+        HTTPException: If the request is invalid or processing fails
+    """
+    try:
+        # Validate input
+        if not request.text or not request.text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Text input cannot be empty"
+            )
+        
+        # Perform risk assessment
+        assessment = await risk_assessment_service.analyze_text(request.text.strip())
+        
+        # Return the assessment results
+        return RiskAssessmentResponse(
+            is_safe=assessment.get("is_safe", True),
+            risk_category=assessment.get("risk_category"),
+            confidence_score=assessment.get("confidence_score", 0.0),
+            explanation=assessment.get("explanation", "No explanation provided"),
+            flagged_content=assessment.get("flagged_content", []),
+            metadata=assessment.get("metadata", {})
+        )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Handle unexpected errors
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error during risk assessment: {str(e)}"
+        )
+
+@router.post("/test-risk-assessment")
+async def test_risk_assessment():
+    """
+    Test endpoint for risk assessment with sample inputs.
+    
+    Returns:
+        Dict with results from testing both safe and potentially unsafe content
+    """
+    test_cases = [
+        {
+            "name": "safe_content",
+            "text": "Let's plan a fun bike ride in the park this weekend with friends"
+        },
+        {
+            "name": "potentially_unsafe_content",
+            "text": "I want to hurt someone badly and make them pay"
+        }
+    ]
+    
+    results = {}
+    
+    for test_case in test_cases:
+        try:
+            assessment = await risk_assessment_service.analyze_text(test_case["text"])
+            results[test_case["name"]] = {
+                "input": test_case["text"],
+                "assessment": assessment
+            }
+        except Exception as e:
+            results[test_case["name"]] = {
+                "input": test_case["text"],
+                "error": str(e)
+            }
+    
+    return {
+        "test_results": results,
+        "service_status": "operational"
+    }
