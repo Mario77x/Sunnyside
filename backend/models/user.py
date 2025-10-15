@@ -23,6 +23,8 @@ class User(BaseModel):
     preferences: Optional[List[str]] = Field(default_factory=list)
     role: str = Field(default="user", description="User role (user, admin, etc.)")
     created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    google_calendar_integrated: bool = Field(default=False)
+    google_calendar_credentials: Optional[dict] = Field(default=None)
 
 
 class UserCreate(BaseModel):
@@ -47,6 +49,8 @@ class UserResponse(BaseModel):
     location: Optional[str] = None
     preferences: List[str] = []
     role: str = "user"
+    google_calendar_integrated: bool = False
+    google_calendar_credentials: Optional[dict] = None
 
 
 class Token(BaseModel):

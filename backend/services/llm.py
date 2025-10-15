@@ -7,6 +7,7 @@ import re
 import httpx
 import asyncio
 from urllib.parse import quote_plus
+from bs4 import BeautifulSoup
 from .risk_assessment import risk_assessment_service
 # import chromadb
 # from sentence_transformers import SentenceTransformer
@@ -386,7 +387,7 @@ Important rules:
                         
                         if response.status_code == 200:
                             # Extract basic venue information from search results
-                            venue_info = self._extract_venue_info_from_search(response.text, activity_type)
+                            venue_info = await self._extract_venue_info_from_search(response.text, activity_type)
                             venues.extend(venue_info)
                             
                     except Exception as e:
@@ -399,82 +400,187 @@ Important rules:
         # Return top 3 venues to avoid overwhelming the LLM
         return venues[:3]
     
-    def _extract_venue_info_from_search(self, html_content: str, activity_type: str) -> List[Dict[str, Any]]:
+    async def _extract_venue_info_from_search(self, html_content: str, activity_type: str) -> List[Dict[str, Any]]:
         """
-        Extract venue information from search results HTML.
-        This is a simplified extraction - in production, you'd want more sophisticated parsing.
+        Extract venue information from search results HTML using BeautifulSoup.
         """
         venues = []
         
         try:
-            # For now, create mock venue data based on activity type
-            # In a real implementation, you'd parse the HTML to extract actual venue information
-            mock_venues = self._generate_mock_venues(activity_type)
-            venues.extend(mock_venues)
+            soup = BeautifulSoup(html_content, 'html.parser')
             
+            # Extract venue information from DuckDuckGo search results
+            # Look for result links and titles
+            result_links = soup.find_all('a', class_='result__a')
+            
+            for link in result_links[:5]:  # Limit to first 5 results
+                try:
+                    title = link.get_text(strip=True)
+                    url = link.get('href', '')
+                    
+                    # Skip if no title or URL
+                    if not title or not url:
+                        continue
+                    
+                    # Find the parent result container to get more info
+                    result_container = link.find_parent('div', class_='result')
+                    description = ""
+                    
+                    if result_container:
+                        # Look for result snippet/description
+                        snippet = result_container.find('a', class_='result__snippet')
+                        if snippet:
+                            description = snippet.get_text(strip=True)
+                    
+                    # Extract domain for better venue identification
+                    domain = ""
+                    if url.startswith('http'):
+                        try:
+                            from urllib.parse import urlparse
+                            parsed_url = urlparse(url)
+                            domain = parsed_url.netloc
+                        except:
+                            pass
+                    
+                    # Create venue entry
+                    venue = {
+                        "name": title,
+                        "description": description or f"Venue for {activity_type}",
+                        "link": url,
+                        "address": self._extract_address_from_text(description) or "Address not available",
+                        "rating": self._extract_rating_from_text(description) or "Rating not available",
+                        "image_url": None,  # Would need additional API calls to get images
+                        "source": domain or "web search"
+                    }
+                    
+                    venues.append(venue)
+                    
+                except Exception as e:
+                    print(f"Error processing search result: {e}")
+                    continue
+            
+            # If no venues found from parsing, use Mistral AI to generate realistic venues
+            if not venues:
+                venues = await self._generate_ai_venues(activity_type)
+                
         except Exception as e:
             print(f"Error extracting venue info: {e}")
+            # Fallback to AI-generated venues
+            venues = await self._generate_ai_venues(activity_type)
             
-        return venues
+        return venues[:3]  # Return top 3 venues
     
-    def _generate_mock_venues(self, activity_type: str) -> List[Dict[str, Any]]:
+    async def _generate_ai_venues(self, activity_type: str) -> List[Dict[str, Any]]:
         """
-        Generate mock venue data based on activity type.
-        This simulates what would be extracted from real search results.
+        Use Mistral AI to generate realistic venue suggestions when web scraping fails.
         """
-        venue_templates = {
-            "hiking": [
-                {
-                    "name": "Scenic Mountain Trail",
-                    "address": "Mountain View Park, Trail Head",
-                    "link": "https://maps.google.com/scenic-mountain-trail",
-                    "image_url": "https://example.com/mountain-trail.jpg",
-                    "description": "Beautiful hiking trail with panoramic views",
-                    "rating": "4.5/5"
-                }
-            ],
-            "restaurant": [
-                {
-                    "name": "Bella Vista Italian Restaurant",
-                    "address": "123 Main Street, Downtown",
-                    "link": "https://maps.google.com/bella-vista-restaurant",
-                    "image_url": "https://example.com/bella-vista.jpg",
-                    "description": "Authentic Italian cuisine with outdoor seating",
-                    "rating": "4.7/5"
-                }
-            ],
-            "museum": [
-                {
-                    "name": "City Art Museum",
-                    "address": "456 Culture Avenue",
-                    "link": "https://maps.google.com/city-art-museum",
-                    "image_url": "https://example.com/art-museum.jpg",
-                    "description": "Contemporary and classical art exhibitions",
-                    "rating": "4.6/5"
-                }
-            ],
-            "default": [
-                {
-                    "name": f"Local {activity_type.title()} Venue",
-                    "address": "Downtown Area",
-                    "link": f"https://maps.google.com/local-{activity_type}-venue",
-                    "image_url": f"https://example.com/{activity_type}-venue.jpg",
-                    "description": f"Popular local venue for {activity_type}",
-                    "rating": "4.4/5"
-                }
+        try:
+            prompt = f"""Generate 3 realistic venue suggestions for "{activity_type}" activities.
+            
+            Return ONLY a JSON array with this exact structure:
+            [
+                {{
+                    "name": "Realistic venue name",
+                    "description": "Brief description of the venue",
+                    "address": "Realistic address",
+                    "rating": "X.X/5",
+                    "link": "https://maps.google.com/search/venue+name",
+                    "source": "ai_generated"
+                }}
             ]
-        }
+            
+            Make the venues sound realistic and appropriate for the activity type. Include varied ratings between 4.0-4.8."""
+            
+            response = self.client.chat(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=800
+            )
+            
+            if response and response.choices and len(response.choices) > 0:
+                response_content = response.choices[0].message.content
+                venues_data = self._parse_json_response(response_content)
+                
+                if isinstance(venues_data, list):
+                    return venues_data
+                elif isinstance(venues_data, dict) and 'venues' in venues_data:
+                    return venues_data['venues']
+                    
+        except Exception as e:
+            print(f"Error generating AI venues: {e}")
         
-        # Return venues based on activity type, or default if not found
-        return venue_templates.get(activity_type.lower(), venue_templates["default"])
+        # Final fallback to basic venue structure
+        return [{
+            "name": f"Local {activity_type.title()} Venue",
+            "description": f"Popular venue for {activity_type} activities",
+            "address": "Local area",
+            "rating": "4.2/5",
+            "link": f"https://maps.google.com/search/{activity_type}+venue",
+            "source": "fallback"
+        }]
     
-    async def get_recommendations(self, query: str, max_results: int = 5) -> Dict[str, Any]:
+    def _extract_address_from_text(self, text: str) -> Optional[str]:
+        """Extract address-like patterns from text."""
+        if not text:
+            return None
+            
+        # Look for common address patterns
+        import re
+        address_patterns = [
+            r'\d+\s+[A-Za-z\s]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln)',
+            r'[A-Za-z\s]+,\s*[A-Za-z\s]+,\s*[A-Z]{2}',  # City, State, ZIP
+            r'\d+\s+[A-Za-z\s]+,\s*[A-Za-z\s]+'  # Simple street, city pattern
+        ]
+        
+        for pattern in address_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group().strip()
+        
+        return None
+    
+    def _extract_rating_from_text(self, text: str) -> Optional[str]:
+        """Extract rating patterns from text."""
+        if not text:
+            return None
+            
+        # Look for rating patterns like "4.5/5", "4.5 stars", "★★★★☆"
+        import re
+        rating_patterns = [
+            r'\d+\.\d+/5',
+            r'\d+\.\d+\s*stars?',
+            r'\d+\.\d+\s*out\s*of\s*5'
+        ]
+        
+        for pattern in rating_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group().strip()
+        
+        return None
+    
+    async def get_recommendations(
+        self,
+        query: str,
+        max_results: int = 5,
+        weather_data: Optional[Dict[str, Any]] = None,
+        date: Optional[str] = None,
+        indoor_outdoor_preference: Optional[str] = None,
+        location: Optional[str] = None,
+        group_size: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
-        Generate activity recommendations using RAG pipeline.
+        Generate activity recommendations using RAG pipeline with contextual information.
         
         Args:
             query: User's query for activity recommendations
             max_results: Maximum number of recommendations to return
+            weather_data: Optional weather information for the activity date/location
+            date: Optional date for the activity (YYYY-MM-DD format)
+            indoor_outdoor_preference: Optional indoor/outdoor preference
+            location: Optional location information
+            group_size: Optional number of people in the group
             
         Returns:
             Dict containing recommendations and metadata
@@ -520,10 +626,11 @@ Important rules:
             if activity_response and activity_response.choices and len(activity_response.choices) > 0:
                 activity_type = activity_response.choices[0].message.content.strip().lower()
             
-            # Step 2: Search for venues related to this activity type
-            venues = await self._search_venues(activity_type, "local")
+            # Step 2: Search for venues related to this activity type with location context
+            search_location = location or "local"
+            venues = await self._search_venues(activity_type, search_location)
             
-            # Step 3: Create enhanced prompt with venue information
+            # Step 3: Build contextual information for the prompt
             venue_context = ""
             if venues:
                 venue_context = "\n\nRELEVANT VENUES FOUND:\n"
@@ -534,8 +641,35 @@ Important rules:
                     venue_context += f"   Rating: {venue['rating']}\n"
                     venue_context += f"   Link: {venue['link']}\n\n"
             
-            # Create enhanced RAG prompt with venue data
-            rag_prompt = f"""You are a helpful activity recommendation assistant. Based on the user's query and the venue information found, provide {max_results} creative and personalized activity recommendations.
+            # Add weather context if provided
+            weather_context = ""
+            if weather_data:
+                weather_context = "\n\nWEATHER INFORMATION:\n"
+                if weather_data.get("forecasts"):
+                    for forecast in weather_data["forecasts"][:3]:  # Show next 3 days
+                        weather_context += f"- {forecast.get('date')}: {forecast.get('weather_description', 'Unknown')}, "
+                        weather_context += f"High: {forecast.get('temperature_max', 'N/A')}°C, "
+                        weather_context += f"Low: {forecast.get('temperature_min', 'N/A')}°C, "
+                        weather_context += f"Rain chance: {forecast.get('precipitation_probability', 0)}%\n"
+                elif weather_data.get("current"):
+                    current = weather_data["current"]
+                    weather_context += f"Current weather: {current.get('weather_description', 'Unknown')}, "
+                    weather_context += f"Temperature: {current.get('temperature', 'N/A')}°C, "
+                    weather_context += f"Humidity: {current.get('humidity', 'N/A')}%\n"
+            
+            # Add additional context
+            additional_context = ""
+            if date:
+                additional_context += f"\n\nPLANNED DATE: {date}"
+            if indoor_outdoor_preference:
+                additional_context += f"\n\nINDOOR/OUTDOOR PREFERENCE: {indoor_outdoor_preference}"
+            if group_size:
+                additional_context += f"\n\nGROUP SIZE: {group_size} people"
+            if location:
+                additional_context += f"\n\nLOCATION: {location}"
+            
+            # Create enhanced RAG prompt with all contextual data
+            rag_prompt = f"""You are a helpful activity recommendation assistant. Based on the user's query and all the contextual information provided, generate {max_results} creative and personalized activity recommendations.
 
 USER QUERY: "{query}"
 
@@ -543,7 +677,7 @@ SAFETY GUIDELINES:
 - Only recommend safe, legal activities
 - Do not suggest activities that could cause harm or danger
 
-{venue_context}
+{venue_context}{weather_context}{additional_context}
 
 Please provide {max_results} activity recommendations in the following JSON format:
 {{

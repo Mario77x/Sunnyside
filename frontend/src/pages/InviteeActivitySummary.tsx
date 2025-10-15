@@ -348,7 +348,19 @@ const InviteeActivitySummary = () => {
               </div>
             </div>
             
-            <div className="pt-4 border-t">
+            <div className="pt-4 border-t space-y-3">
+              <Button
+                onClick={() => navigate('/invitee-response', {
+                  state: {
+                    activity: activity,
+                    isResponseChange: true
+                  }
+                })}
+                variant="outline"
+                className="w-full"
+              >
+                Change Response
+              </Button>
               <Button
                 onClick={() => navigate('/')}
                 className="w-full"

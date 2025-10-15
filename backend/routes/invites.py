@@ -50,31 +50,57 @@ async def get_public_activity_data(db: AsyncIOMotorDatabase, activity_id: str) -
 
 
 async def update_invitee_response(
-    db: AsyncIOMotorDatabase, 
-    activity_id: str, 
-    guest_id: str, 
+    db,
+    activity_id: str,
+    guest_id: str,
     response_data: GuestResponseRequest
-) -> bool:
-    """Update a specific invitee's response within an activity document."""
+) -> tuple[bool, bool, Optional[str]]:
+    """
+    Update a specific invitee's response within an activity document.
+    
+    Returns:
+        tuple: (success, is_response_change, previous_response)
+    """
     if not ObjectId.is_valid(activity_id):
-        return False
+        return False, False, None
     
     # Find the activity and the specific invitee
     activity = await db.activities.find_one({"_id": ObjectId(activity_id)})
     if not activity:
-        return False
+        return False, False, None
     
     # Find the invitee by guest_id (which could be email or a unique identifier)
     invitee_found = False
+    invitee_index = -1
+    current_response = None
+    
     for i, invitee in enumerate(activity.get("invitees", [])):
         # Match by guest_id (could be email or ObjectId string)
-        if (invitee.get("email") == guest_id or 
+        if (invitee.get("email") == guest_id or
             str(invitee.get("id", "")) == guest_id):
             invitee_found = True
+            invitee_index = i
+            current_response = invitee.get("response")
             break
     
     if not invitee_found:
-        return False
+        return False, False, None
+    
+    # Check if this is a response change (user already has a response)
+    is_response_change = current_response and current_response != InviteeResponse.PENDING.value
+    
+    # Prepare update fields
+    update_fields = {
+        "invitees.$.response": response_data.response.value,
+        "invitees.$.availability_note": response_data.availability_note,
+        "invitees.$.preferences": response_data.preferences or {},
+        "invitees.$.venue_suggestion": response_data.venue_suggestion,
+        "updated_at": datetime.utcnow()
+    }
+    
+    # Store previous response if this is a change
+    if is_response_change:
+        update_fields["invitees.$.previous_response"] = current_response
     
     # Update the specific invitee's response using email match
     update_result = await db.activities.update_one(
@@ -82,18 +108,10 @@ async def update_invitee_response(
             "_id": ObjectId(activity_id),
             "invitees.email": guest_id
         },
-        {
-            "$set": {
-                "invitees.$.response": response_data.response.value,
-                "invitees.$.availability_note": response_data.availability_note,
-                "invitees.$.preferences": response_data.preferences or {},
-                "invitees.$.venue_suggestion": response_data.venue_suggestion,
-                "updated_at": datetime.utcnow()
-            }
-        }
+        {"$set": update_fields}
     )
     
-    return update_result.modified_count > 0
+    return update_result.modified_count > 0, is_response_change, current_response
 
 
 @router.get("/{activity_id}", response_model=PublicActivityResponse)
@@ -171,7 +189,7 @@ async def submit_guest_response(
             )
         
         # Update the invitee's response
-        success = await update_invitee_response(
+        success, is_response_change, previous_response = await update_invitee_response(
             db, activity_id, response_data.guest_id, response_data
         )
         
@@ -190,45 +208,75 @@ async def submit_guest_response(
                 guest_name = invitee.get("name")
                 break
         
-        # Send notification to organizer (THIS WAS MISSING!)
+        # Send notification to organizer
         logger.info(f"Sending notification to organizer for guest response from {guest_name}")
         notification_service = NotificationService()
         organizer = await db.users.find_one({"_id": activity["organizer_id"]})
         
         if organizer:
-            # Create in-app notification
-            await notification_service.create_notification(
-                db,
-                str(activity["organizer_id"]),
-                f"{guest_name} responded '{response_data.response.value}' to {activity['title']}",
-                "activity_response",
-                {
-                    "activity_id": activity_id,
-                    "activity_title": activity["title"],
-                    "responder_name": guest_name,
-                    "response": response_data.response.value,
-                    "availability_note": response_data.availability_note,
-                    "venue_suggestion": response_data.venue_suggestion
-                }
-            )
-            
-            # Send email notification to organizer
-            email_sent = await notification_service.send_activity_response_notification_email(
-                to_email=organizer["email"],
-                to_name=organizer["name"],
-                responder_name=guest_name or "Guest",
-                activity_title=activity["title"],
-                response=response_data.response.value,
-                availability_note=response_data.availability_note,
-                venue_suggestion=response_data.venue_suggestion
-            )
+            if is_response_change:
+                # Send response change notification
+                await notification_service.create_notification(
+                    db,
+                    str(activity["organizer_id"]),
+                    f"{guest_name} changed their response from '{previous_response}' to '{response_data.response.value}' for {activity['title']}",
+                    "activity_response_changed",
+                    {
+                        "activity_id": activity_id,
+                        "activity_title": activity["title"],
+                        "responder_name": guest_name,
+                        "previous_response": previous_response,
+                        "new_response": response_data.response.value,
+                        "availability_note": response_data.availability_note,
+                        "venue_suggestion": response_data.venue_suggestion
+                    }
+                )
+                
+                # Send response change email notification
+                email_sent = await notification_service.send_activity_response_changed_notification_email(
+                    to_email=organizer["email"],
+                    to_name=organizer["name"],
+                    responder_name=guest_name or "Guest",
+                    activity_title=activity["title"],
+                    previous_response=previous_response or "pending",
+                    new_response=response_data.response.value,
+                    availability_note=response_data.availability_note,
+                    venue_suggestion=response_data.venue_suggestion
+                )
+            else:
+                # Send initial response notification
+                await notification_service.create_notification(
+                    db,
+                    str(activity["organizer_id"]),
+                    f"{guest_name} responded '{response_data.response.value}' to {activity['title']}",
+                    "activity_response",
+                    {
+                        "activity_id": activity_id,
+                        "activity_title": activity["title"],
+                        "responder_name": guest_name,
+                        "response": response_data.response.value,
+                        "availability_note": response_data.availability_note,
+                        "venue_suggestion": response_data.venue_suggestion
+                    }
+                )
+                
+                # Send email notification to organizer
+                email_sent = await notification_service.send_activity_response_notification_email(
+                    to_email=organizer["email"],
+                    to_name=organizer["name"],
+                    responder_name=guest_name or "Guest",
+                    activity_title=activity["title"],
+                    response=response_data.response.value,
+                    availability_note=response_data.availability_note,
+                    venue_suggestion=response_data.venue_suggestion
+                )
             
             logger.info(f"Notification sent to organizer {organizer['name']} - Email: {email_sent}")
         else:
             logger.error(f"Could not find organizer for activity {activity_id}")
         
         return GuestResponseSubmission(
-            message="Response submitted successfully",
+            message="Response updated successfully" if is_response_change else "Response submitted successfully",
             response_recorded=response_data.response,
             guest_name=guest_name
         )

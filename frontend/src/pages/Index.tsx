@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Calendar, Users, Cloud, Clock, CheckCircle, Archive, UserCheck, Settings, TestTube, Loader2, Wifi, WifiOff, Trash2 } from 'lucide-react';
+import { Plus, Calendar, Users, Cloud, Clock, CheckCircle, Archive, UserCheck, Settings, TestTube, Loader2, Wifi, WifiOff, Trash2, AlertCircle, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,9 +17,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useNavigate } from 'react-router-dom';
 import { showSuccess, showError } from '@/utils/toast';
-import { calculateDeadline } from '@/utils/deadlineCalculator';
+import { calculateDeadline, getDeadlineText, isDeadlinePassed, getDeadlineStatus } from '@/utils/deadlineCalculator';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiService, Activity } from '@/services/api';
+import { apiService, Activity, Invitee } from '@/services/api';
 import WeatherWidget from '@/components/WeatherWidget';
 import { NotificationBell } from '@/components/NotificationBell';
 
@@ -277,86 +277,338 @@ const Index = () => {
     }
   };
 
+  const getUserResponseStatus = (activity: Activity): { status: string; badge: React.ReactNode } => {
+    if (!user) return { status: 'unknown', badge: <Badge variant="outline">Unknown</Badge> };
+
+    // Check if user has responded in the activity.invitees array
+    const userInvitee = activity.invitees?.find(invitee => invitee.email === user.email);
+    
+    if (userInvitee && userInvitee.response && userInvitee.response !== 'pending') {
+      switch (userInvitee.response) {
+        case 'yes':
+          return {
+            status: 'accepted',
+            badge: <Badge className="bg-green-100 text-green-800">✓ Accepted</Badge>
+          };
+        case 'maybe':
+          return {
+            status: 'maybe',
+            badge: <Badge className="bg-yellow-100 text-yellow-800">? Maybe</Badge>
+          };
+        case 'no':
+          return {
+            status: 'declined',
+            badge: <Badge className="bg-red-100 text-red-800">✗ Declined</Badge>
+          };
+      }
+    }
+
+    // Check localStorage for responses (fallback for current implementation)
+    const activities = JSON.parse(localStorage.getItem('sunnyside_activities') || '[]');
+    const storedActivity = activities.find(act => act.id === activity.id);
+    if (storedActivity && storedActivity.responses) {
+      const userResponse = storedActivity.responses.find(r => r.userId === user.id);
+      if (userResponse && userResponse.response) {
+        switch (userResponse.response) {
+          case 'yes':
+            return {
+              status: 'accepted',
+              badge: <Badge className="bg-green-100 text-green-800">✓ Accepted</Badge>
+            };
+          case 'maybe':
+            return {
+              status: 'maybe',
+              badge: <Badge className="bg-yellow-100 text-yellow-800">? Maybe</Badge>
+            };
+          case 'no':
+            return {
+              status: 'declined',
+              badge: <Badge className="bg-red-100 text-red-800">✗ Declined</Badge>
+            };
+        }
+      }
+    }
+
+    return {
+      status: 'pending',
+      badge: <Badge variant="outline" className="text-orange-600 border-orange-300">⏳ Pending</Badge>
+    };
+  };
+
+  const formatActivityDate = (dateString?: string): string => {
+    if (!dateString) return 'Date TBD';
+    
+    const date = new Date(dateString);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const activityDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    
+    const diffTime = activityDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) {
+      return `Today, ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    } else if (diffDays === 1) {
+      return `Tomorrow, ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    } else if (diffDays === -1) {
+      return `Yesterday, ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    } else {
+      return date.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+      });
+    }
+  };
+
+  const formatDeadline = (deadlineString?: string): { text: string; status: 'active' | 'warning' | 'passed'; icon: React.ReactNode } => {
+    if (!deadlineString) return {
+      text: 'No deadline',
+      status: 'active',
+      icon: <Clock className="w-3 h-3" />
+    };
+    
+    const deadline = new Date(deadlineString);
+    const status = getDeadlineStatus(deadline);
+    const text = getDeadlineText(deadline);
+    
+    let icon: React.ReactNode;
+    switch (status) {
+      case 'passed':
+        icon = <AlertCircle className="w-3 h-3" />;
+        break;
+      case 'warning':
+        icon = <AlertCircle className="w-3 h-3" />;
+        break;
+      default:
+        icon = <Clock className="w-3 h-3" />;
+    }
+    
+    return { text, status, icon };
+  };
+
+  // Helper function to calculate response counts from invitees
+  const getResponseCounts = (invitees: Invitee[] = []) => {
+    const counts = {
+      accepted: 0,
+      maybe: 0,
+      declined: 0,
+      pending: 0
+    };
+
+    invitees.forEach(invitee => {
+      switch (invitee.response) {
+        case 'yes':
+          counts.accepted++;
+          break;
+        case 'maybe':
+          counts.maybe++;
+          break;
+        case 'no':
+          counts.declined++;
+          break;
+        default:
+          counts.pending++;
+      }
+    });
+
+    return counts;
+  };
+
   const ActivityCard = ({ activity, showStatus = true, isOrganizer = false }: {
     activity: Activity;
     showStatus?: boolean;
     isOrganizer?: boolean;
-  }) => (
-    <div className="p-4 border rounded-lg hover:bg-gray-50 transition-colors">
-      <div className="flex items-start justify-between mb-2">
+  }) => {
+    const userResponse = !isOrganizer ? getUserResponseStatus(activity) : null;
+    const deadline = !isOrganizer ? formatDeadline(activity.deadline) : null;
+    const organizerDeadline = isOrganizer ? formatDeadline(activity.deadline) : null;
+    const responseCounts = isOrganizer ? getResponseCounts(activity.invitees) : null;
+
+    return (
+      <div className="p-4 border rounded-lg hover:bg-gray-50 transition-colors">
+        <div className="flex items-start justify-between mb-2">
+          <div
+            className="flex-1 cursor-pointer"
+            onClick={() => handleSelectActivity(activity)}
+          >
+            <h3 className="font-semibold">{activity.title}</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            {showStatus && isOrganizer && getStatusBadge(activity)}
+            {!isOrganizer && userResponse && userResponse.badge}
+            {isOrganizer && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50 p-1 h-auto"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{getDeleteModalContent(activity).title}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {getDeleteModalContent(activity).description}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => handleDeleteActivity(activity.id, activity.title)}
+                      className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                    >
+                      Delete Activity
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+          </div>
+        </div>
         <div
-          className="flex-1 cursor-pointer"
+          className="cursor-pointer"
           onClick={() => handleSelectActivity(activity)}
         >
-          <h3 className="font-semibold">{activity.title}</h3>
-        </div>
-        <div className="flex items-center gap-2">
-          {showStatus && getStatusBadge(activity)}
+          <p className="text-gray-600 text-sm mb-3">{activity.description}</p>
+          
+          {/* Enhanced information for organizers */}
           {isOrganizer && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-red-600 hover:text-red-700 hover:bg-red-50 p-1 h-auto"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{getDeleteModalContent(activity).title}</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {getDeleteModalContent(activity).description}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => handleDeleteActivity(activity.id, activity.title)}
-                    className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
-                  >
-                    Delete Activity
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <div className="mb-3 p-3 bg-orange-50 rounded-lg border border-orange-200">
+              <div className="grid grid-cols-1 gap-2 text-sm">
+                {/* Activity Date */}
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-orange-600" />
+                  <span className="font-medium text-orange-900">Activity Date:</span>
+                  <span className="text-orange-800">{formatActivityDate(activity.selected_date)}</span>
+                </div>
+                
+                {/* Response Counts */}
+                {responseCounts && (
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-orange-600" />
+                    <span className="font-medium text-orange-900">Responses:</span>
+                    <div className="flex items-center gap-3 text-orange-800">
+                      <span className="flex items-center gap-1">
+                        <CheckCircle className="w-3 h-3 text-green-600" />
+                        {responseCounts.accepted} Accepted
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3 text-yellow-600" />
+                        {responseCounts.maybe} Maybe
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3 text-red-600" />
+                        {responseCounts.declined} Declined
+                      </span>
+                      {responseCounts.pending > 0 && (
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-gray-600" />
+                          {responseCounts.pending} Pending
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Response Deadline */}
+                {organizerDeadline && (
+                  <div className="flex items-center gap-2">
+                    {organizerDeadline.icon}
+                    <span className="font-medium text-orange-900">Response Deadline:</span>
+                    <span className={`${
+                      organizerDeadline.status === 'passed' ? 'text-red-600 font-medium' :
+                      organizerDeadline.status === 'warning' ? 'text-orange-600 font-medium' :
+                      'text-orange-800'
+                    }`}>
+                      {organizerDeadline.text}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
-        </div>
-      </div>
-      <div
-        className="cursor-pointer"
-        onClick={() => handleSelectActivity(activity)}
-      >
-        <p className="text-gray-600 text-sm mb-3">{activity.description}</p>
-        <div className="flex items-center gap-4 text-sm text-gray-500">
-          {activity.selected_date && (
-            <span className="flex items-center gap-1">
-              <Calendar className="w-3 h-3" />
-              {new Date(activity.selected_date).toLocaleDateString()}
-            </span>
-          )}
-          {activity.selected_days && activity.selected_days.length > 0 && (
-            <span className="flex items-center gap-1">
-              <Clock className="w-3 h-3" />
-              {activity.selected_days.join(', ')}
-            </span>
-          )}
-          <span className="flex items-center gap-1">
-            <Users className="w-3 h-3" />
-            {activity.invitees?.length || 0} invitees
-          </span>
+
+          {/* Enhanced information for invitees */}
           {!isOrganizer && (
-            <span className="flex items-center gap-1">
-              <UserCheck className="w-3 h-3" />
-              Invited by Someone
-            </span>
+            <div className="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="grid grid-cols-1 gap-2 text-sm">
+                {/* Organizer */}
+                <div className="flex items-center gap-2">
+                  <User className="w-4 h-4 text-blue-600" />
+                  <span className="font-medium text-blue-900">Organized by:</span>
+                  <span className="text-blue-800 font-medium">{activity.organizer_name || 'Someone'}</span>
+                </div>
+                
+                {/* Activity Date */}
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-blue-600" />
+                  <span className="font-medium text-blue-900">Activity Date:</span>
+                  <span className="text-blue-800">{formatActivityDate(activity.selected_date)}</span>
+                </div>
+                
+                {/* Response Deadline */}
+                {deadline && (
+                  <div className="flex items-center gap-2">
+                    {deadline.icon}
+                    <span className="font-medium text-blue-900">Response Deadline:</span>
+                    <span className={`${
+                      deadline.status === 'passed' ? 'text-red-600 font-medium' :
+                      deadline.status === 'warning' ? 'text-orange-600 font-medium' :
+                      'text-blue-800'
+                    }`}>
+                      {deadline.text}
+                    </span>
+                  </div>
+                )}
+                
+                {/* Response Status */}
+                {userResponse && (
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-blue-600" />
+                    <span className="font-medium text-blue-900">Your Response:</span>
+                    <span className="text-blue-800">
+                      {userResponse.status === 'accepted' ? 'You accepted this invitation' :
+                       userResponse.status === 'maybe' ? 'You responded maybe' :
+                       userResponse.status === 'declined' ? 'You declined this invitation' :
+                       'Response pending - click to respond'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
+
+          {/* Standard activity information */}
+          <div className="flex items-center gap-4 text-sm text-gray-500">
+            {activity.selected_days && activity.selected_days.length > 0 && (
+              <span className="flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                {activity.selected_days.join(', ')}
+              </span>
+            )}
+            {!isOrganizer && (
+              <>
+                <span className="flex items-center gap-1">
+                  <Users className="w-3 h-3" />
+                  {activity.invitees?.length || 0} invitees
+                </span>
+                <span className="flex items-center gap-1">
+                  <UserCheck className="w-3 h-3" />
+                  Invited by {activity.organizer_name || 'Someone'}
+                </span>
+              </>
+            )}
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   if (authLoading) {
     return (

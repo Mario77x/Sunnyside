@@ -24,6 +24,8 @@ export interface User {
   communication_channel?: string;
   created_at: string;
   role?: string;
+  google_calendar_integrated?: boolean;
+  google_calendar_credentials?: any;
 }
 
 export interface ActivitySuggestion {
@@ -43,6 +45,7 @@ export interface ActivitySuggestion {
 export interface Activity {
   id: string;
   organizer_id: string;
+  organizer_name?: string;
   title: string;
   description?: string;
   status: 'planning' | 'invitations-sent' | 'collecting-responses' | 'ready-for-recommendations' | 'recommendations-sent' | 'confirmed' | 'completed';
@@ -52,6 +55,7 @@ export interface Activity {
   weather_preference?: string;
   selected_date?: string;
   selected_days?: string[];
+  deadline?: string;
   weather_data?: any[];
   suggestions?: ActivitySuggestion[];
   invitees?: Invitee[];
@@ -67,6 +71,7 @@ export interface Invitee {
   availability_note?: string;
   venue_suggestion?: string;
   preferences?: Record<string, any>;
+  previous_response?: 'pending' | 'yes' | 'maybe' | 'no';
 }
 
 export interface WeatherLocation {
@@ -176,6 +181,62 @@ export interface ContactUpdate {
   notes?: string;
 }
 
+export interface UserResponseRequest {
+  response: 'yes' | 'no' | 'maybe';
+  availabilityNote?: string;
+  preferences?: Record<string, any>;
+  venueSuggestion?: string;
+}
+
+export interface AIRecommendation {
+  id: string;
+  name: string;
+  description: string;
+  reasoning: string;
+  rating?: number;
+  price_range?: string;
+  category: string;
+  venue_details?: Record<string, any>;
+  created_at?: string;
+}
+
+export interface RecommendationResponse {
+  success: boolean;
+  recommendations: AIRecommendation[];
+  activity_id: string;
+  confirmed_attendees: number;
+  metadata: Record<string, any>;
+  error?: string;
+}
+
+export interface FinalizeActivityRequest {
+  recommendation_id: string;
+  final_message?: string;
+}
+
+export interface ActivitySummaryResponse {
+  activity: Activity;
+  summary: {
+    total_invitees: number;
+    responses: {
+      yes: number;
+      no: number;
+      maybe: number;
+      pending: number;
+    };
+    response_rate: number;
+    venue_suggestions: Array<{
+      name: string;
+      suggestion: string;
+    }>;
+    availability_notes: Array<{
+      name: string;
+      note: string;
+    }>;
+    deadline_passed: boolean;
+  };
+}
+
 class ApiService {
   private getAuthHeaders(): HeadersInit {
     const token = localStorage.getItem('sunnyside_token');
@@ -278,6 +339,7 @@ class ApiService {
     weather_preference?: string;
     selected_date?: string;
     selected_days?: string[];
+    deadline?: string;
   }): Promise<ApiResponse<Activity>> {
     const response = await fetch(`${API_BASE_URL}/api/v1/activities`, {
       method: 'POST',
@@ -367,6 +429,7 @@ class ApiService {
     weather_preference?: string;
     timeframe?: string;
     group_size?: string;
+    deadline?: string;
   }>> {
     const response = await fetch(`${API_BASE_URL}/api/v1/invites/${activityId}`, {
       headers: { 'Content-Type': 'application/json' }
@@ -430,7 +493,17 @@ class ApiService {
   }
 
   // Recommendation endpoints
-  async getRecommendations(query: string, maxResults: number = 5): Promise<ApiResponse<{
+  async getRecommendations(
+    query: string,
+    maxResults: number = 5,
+    options?: {
+      weather_data?: any;
+      date?: string;
+      indoor_outdoor_preference?: string;
+      location?: string;
+      group_size?: number;
+    }
+  ): Promise<ApiResponse<{
     success: boolean;
     recommendations: Array<{
       title: string;
@@ -454,10 +527,16 @@ class ApiService {
     metadata: Record<string, any>;
     error?: string;
   }>> {
+    const requestBody = {
+      query,
+      max_results: maxResults,
+      ...options
+    };
+
     const response = await fetch(`${API_BASE_URL}/api/v1/llm/recommendations`, {
       method: 'POST',
       headers: this.getAuthHeaders(),
-      body: JSON.stringify({ query, max_results: maxResults })
+      body: JSON.stringify(requestBody)
     });
     
     return this.handleResponse(response);
@@ -660,6 +739,121 @@ class ApiService {
   async healthCheck(): Promise<ApiResponse<{ status: string; db_status: string }>> {
     const response = await fetch(`${API_BASE_URL}/healthz`);
     return this.handleResponse(response);
+  }
+
+  // User response submission for registered users
+  async submitUserResponse(activityId: string, responseData: UserResponseRequest): Promise<ApiResponse<{
+    message: string;
+    response_recorded: string;
+    activity_title: string;
+    is_change?: boolean;
+    previous_response?: string;
+  }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/activities/${activityId}/respond`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(responseData)
+    });
+    
+    return this.handleResponse(response);
+  }
+
+  // Generate AI recommendations based on activity responses
+  async generateAIRecommendations(activityId: string): Promise<ApiResponse<RecommendationResponse>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/activities/${activityId}/recommendations`, {
+      method: 'POST',
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<RecommendationResponse>(response);
+  }
+
+  // Finalize activity with selected recommendation
+  async finalizeActivity(activityId: string, finalizeData: FinalizeActivityRequest): Promise<ApiResponse<{
+    message: string;
+    activity_id: string;
+    selected_venue: string;
+    confirmed_attendees: number;
+    emails_sent: number;
+    email_results: Array<{
+      email: string;
+      name: string;
+      email_sent: boolean;
+    }>;
+  }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/activities/${activityId}/finalize`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(finalizeData)
+    });
+    
+    return this.handleResponse(response);
+  }
+
+  // Get activity summary with all responses
+  async getActivitySummary(activityId: string): Promise<ApiResponse<ActivitySummaryResponse>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/activities/${activityId}/summary`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<ActivitySummaryResponse>(response);
+  }
+
+  // Google Calendar integration endpoints
+  async initiateGoogleCalendarAuth(): Promise<ApiResponse<{ authorization_url: string }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/calendar/auth/google`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<{ authorization_url: string }>(response);
+  }
+
+  async getCalendarIntegrationStatus(): Promise<ApiResponse<{
+    integrated: boolean;
+    has_credentials: boolean;
+  }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/calendar/status`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse(response);
+  }
+
+  async getCalendarAvailability(startDate: string, endDate: string): Promise<ApiResponse<{
+    integrated: boolean;
+    availability?: {
+      busy_slots: Array<{
+        start: string;
+        end: string;
+        title: string;
+      }>;
+      suggestions: string[];
+      date_range: {
+        start: string;
+        end: string;
+      };
+    };
+    message?: string;
+  }>> {
+    const params = new URLSearchParams({
+      start_date: startDate,
+      end_date: endDate
+    });
+    
+    const response = await fetch(`${API_BASE_URL}/api/v1/calendar/availability?${params}`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse(response);
+  }
+
+  async disconnectGoogleCalendar(): Promise<ApiResponse<{ message: string }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/calendar/integration`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<{ message: string }>(response);
   }
 }
 

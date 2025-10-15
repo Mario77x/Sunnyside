@@ -2,9 +2,9 @@
 # For development and testing purposes only
 
 TEST_PORT=5137
-TEST_EMAIL=test@example.com
-TEST_PASSWORD=password123
-TEST_USER_NAME=Test User
+TEST_EMAIL=test@testy.com
+TEST_PASSWORD=W^XXT$%L7hddx*GJSJEp
+TEST_USER_NAME=Testy user
 
 # Notes:
 # - Frontend runs on port 5137

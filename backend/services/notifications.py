@@ -30,12 +30,29 @@ class NotificationService:
         """Initialize the notification service with EmailJS configuration."""
         self.emailjs_service_id = os.getenv("EMAILJS_SERVICE_ID")
         self.emailjs_public_key = os.getenv("EMAILJS_PUBLIC_KEY")
-        self.emailjs_welcome_template_id = os.getenv("EMAILJS_WELCOME_TEMPLATE_ID")
         self.from_email = "noreply@sunnyside.app"
         self.from_name = "Sunnyside"
         
         # EmailJS REST API endpoint
         self.emailjs_api_url = "https://api.emailjs.com/api/v1.0/email/send"
+        
+        # Load all EmailJS template IDs
+        self.template_ids = {
+            'welcome': os.getenv("EMAILJS_WELCOME_TEMPLATE_ID"),
+            'activity_invitation': os.getenv("EMAILJS_ACTIVITY_INVITATION_TEMPLATE_ID"),
+            'guest_activity_invitation': os.getenv("EMAILJS_GUEST_ACTIVITY_INVITATION_TEMPLATE_ID"),
+            'contact_request': os.getenv("EMAILJS_CONTACT_REQUEST_TEMPLATE_ID"),
+            'contact_accepted': os.getenv("EMAILJS_CONTACT_ACCEPTED_TEMPLATE_ID"),
+            'account_invitation': os.getenv("EMAILJS_ACCOUNT_INVITATION_TEMPLATE_ID"),
+            'activity_cancellation': os.getenv("EMAILJS_ACTIVITY_CANCELLATION_TEMPLATE_ID"),
+            'activity_response': os.getenv("EMAILJS_ACTIVITY_RESPONSE_TEMPLATE_ID"),
+            'activity_response_changed': os.getenv("EMAILJS_ACTIVITY_RESPONSE_CHANGED_TEMPLATE_ID"),
+            'activity_finalized': os.getenv("EMAILJS_ACTIVITY_FINALIZED_TEMPLATE_ID"),
+            'deadline_reminder': os.getenv("EMAILJS_DEADLINE_REMINDER_TEMPLATE_ID"),
+            'activity_update': os.getenv("EMAILJS_ACTIVITY_UPDATE_TEMPLATE_ID"),
+            'upcoming_activity_reminder': os.getenv("EMAILJS_UPCOMING_ACTIVITY_REMINDER_TEMPLATE_ID"),
+            'password_reset': os.getenv("EMAILJS_PASSWORD_RESET_TEMPLATE_ID")
+        }
         
         if not self.emailjs_service_id or not self.emailjs_public_key:
             # Temporary solution, sending links to local env during PoC testing, to be removed before launch
@@ -47,28 +64,32 @@ class NotificationService:
     async def send_email(
         self,
         to_email: str,
-        subject: str,
-        html_content: str,
-        plain_text_content: Optional[str] = None,
-        template_data: Optional[Dict[str, Any]] = None
+        template_key: str,
+        template_params: Dict[str, Any],
+        subject: Optional[str] = None
     ) -> bool:
         """
-        Send an email using EmailJS.
+        Send an email using EmailJS with a specific template.
         
         Args:
             to_email: Recipient email address
-            subject: Email subject
-            html_content: HTML content of the email
-            plain_text_content: Plain text content (optional)
-            template_data: Additional template data for dynamic content
+            template_key: Key for the template to use (from self.template_ids)
+            template_params: Template parameters for dynamic content
+            subject: Email subject (optional, can be set in template)
             
         Returns:
             bool: True if email was sent successfully, False otherwise
         """
+        # Get template ID
+        template_id = self.template_ids.get(template_key)
+        if not template_id:
+            logger.error(f"Template '{template_key}' not found or not configured")
+            return False
+        
         # Temporary solution, sending links to local env during PoC testing, to be removed before launch
         if (not self.emailjs_service_id or not self.emailjs_public_key) and is_local_development():
-            logger.info(f"LOCAL DEV: Would send email to {to_email} with subject '{subject}'")
-            logger.info(f"LOCAL DEV: Email content preview: {html_content[:200]}...")
+            logger.info(f"LOCAL DEV: Would send email to {to_email} using template '{template_key}'")
+            logger.info(f"LOCAL DEV: Template params: {template_params}")
             return True
         elif not self.emailjs_service_id or not self.emailjs_public_key:
             logger.error("EmailJS credentials not configured. Cannot send email.")
@@ -78,16 +99,15 @@ class NotificationService:
             # Prepare the JSON payload for EmailJS REST API
             payload = {
                 "service_id": self.emailjs_service_id,
-                "template_id": self.emailjs_welcome_template_id,  # Default to welcome template
+                "template_id": template_id,
                 "user_id": self.emailjs_public_key,
                 "template_params": {
                     "to_email": to_email,
-                    "to_name": to_email.split('@')[0],  # Extract name from email if not provided
-                    "subject": subject,
-                    "message": html_content,
+                    "to_name": template_params.get("to_name", to_email.split('@')[0]),
                     "from_name": self.from_name,
                     "from_email": self.from_email,
-                    **(template_data or {})
+                    **({"subject": subject} if subject else {}),
+                    **template_params
                 }
             }
             
@@ -104,7 +124,7 @@ class NotificationService:
             
             # Check if the email was sent successfully
             if response.status_code == 200:
-                logger.info(f"Email sent successfully to {to_email}")
+                logger.info(f"Email sent successfully to {to_email} using template '{template_key}'")
                 return True
             else:
                 logger.error(f"Failed to send email to {to_email}. Status code: {response.status_code}, Response: {response.text}")
@@ -136,13 +156,12 @@ class NotificationService:
             activity_description: Description of the activity
             custom_message: Custom message from organizer
             invite_link: Link to respond to the invitation
+            activity_details: Additional activity details
             
         Returns:
             bool: True if email was sent successfully, False otherwise
         """
-        subject = f"You're invited to {activity_title}!"
-        
-        # Extract activity details
+        # Extract and format activity details
         selected_date = activity_details.get('selected_date') if activity_details else None
         selected_days = activity_details.get('selected_days', []) if activity_details else []
         weather_preference = activity_details.get('weather_preference') if activity_details else None
@@ -164,109 +183,30 @@ class NotificationService:
         else:
             date_info = "Flexible dates"
         
-        # Create activity details section
-        activity_details_html = f"""
-        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: #2c5aa0;">{activity_title}</h3>
-            <p style="margin-bottom: 10px;">{activity_description}</p>
-            
-            <div style="margin: 15px 0;">
-                <p style="margin: 5px 0;"><strong>📅 Date:</strong> {date_info}</p>
-                {f'<p style="margin: 5px 0;"><strong>🌤️ Preference:</strong> {weather_preference.title()}</p>' if weather_preference else ''}
-                {f'<p style="margin: 5px 0;"><strong>👥 Group size:</strong> {group_size}</p>' if group_size else ''}
-            </div>
-        </div>
-        """
+        # Prepare template parameters
+        template_params = {
+            "to_name": to_name,
+            "organizer_name": organizer_name,
+            "activity_title": activity_title,
+            "activity_description": activity_description,
+            "date_info": date_info,
+            "weather_preference": weather_preference.title() if weather_preference else "",
+            "group_size": str(group_size) if group_size else "",
+            "custom_message": custom_message or "",
+            "invite_link": invite_link or "",
+            "has_custom_message": bool(custom_message),
+            "has_weather_preference": bool(weather_preference),
+            "has_group_size": bool(group_size),
+            "has_invite_link": bool(invite_link),
+            "weather_data": weather_data[:4] if weather_data else [],
+            "suggestions": suggestions[:3] if suggestions else [],
+            "has_weather_data": bool(weather_data),
+            "has_suggestions": bool(suggestions),
+            "additional_suggestions_count": max(0, len(suggestions) - 3) if suggestions else 0
+        }
         
-        # Create weather forecast section
-        weather_html = ""
-        if weather_data and len(weather_data) > 0:
-            weather_items = []
-            for i, day in enumerate(weather_data[:4]):  # Show first 4 days
-                day_name = "Today" if i == 0 else "Tomorrow" if i == 1 else day.get('day', f'Day {i+1}')
-                temp_max = day.get('temperature_max', day.get('temperature', 'N/A'))
-                temp_min = day.get('temperature_min', day.get('temperature', 'N/A'))
-                condition = day.get('condition', day.get('weather_description', 'Unknown'))
-                precipitation = day.get('precipitation', day.get('precipitation_chance', 0))
-                
-                weather_emoji = "☀️" if condition == 'sunny' else "🌧️" if condition == 'rainy' else "☁️"
-                
-                weather_items.append(f"""
-                <div style="display: inline-block; margin: 5px; padding: 10px; background: white; border-radius: 6px; text-align: center; min-width: 80px;">
-                    <div style="font-weight: bold; font-size: 12px;">{day_name}</div>
-                    <div style="font-size: 20px; margin: 5px 0;">{weather_emoji}</div>
-                    <div style="font-size: 12px;">{temp_max}°/{temp_min}°</div>
-                    {f'<div style="font-size: 10px; color: #666;">{int(precipitation)}% rain</div>' if precipitation > 0 else ''}
-                </div>
-                """)
-            
-            weather_html = f"""
-            <div style="background-color: #e3f2fd; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                <h4 style="margin-top: 0; color: #1976d2;">🌤️ Weather Forecast</h4>
-                <div style="text-align: center;">
-                    {''.join(weather_items)}
-                </div>
-            </div>
-            """
-        
-        # Create suggestions section
-        suggestions_html = ""
-        if suggestions and len(suggestions) > 0:
-            suggestion_items = []
-            for suggestion in suggestions[:3]:  # Show first 3 suggestions
-                suggestion_items.append(f"""
-                <div style="margin: 10px 0; padding: 12px; background: white; border-left: 4px solid #ff9800; border-radius: 4px;">
-                    <div style="font-weight: bold; color: #f57c00;">{suggestion.get('title', 'Activity Suggestion')}</div>
-                    <div style="font-size: 14px; color: #666; margin-top: 5px;">{suggestion.get('description', '')}</div>
-                    <div style="font-size: 12px; color: #999; margin-top: 5px;">
-                        {suggestion.get('duration', '')} • {suggestion.get('budget', '')} • {suggestion.get('indoor_outdoor', '')}
-                    </div>
-                </div>
-                """)
-            
-            suggestions_html = f"""
-            <div style="background-color: #fff3e0; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                <h4 style="margin-top: 0; color: #f57c00;">💡 Activity Ideas</h4>
-                {''.join(suggestion_items)}
-                {f'<p style="font-size: 12px; color: #666; text-align: center; margin-top: 10px;">+{len(suggestions) - 3} more suggestions</p>' if len(suggestions) > 3 else ''}
-            </div>
-            """
-        
-        # Create HTML content
-        html_content = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #2c5aa0;">You're Invited!</h2>
-                
-                <p>Hi {to_name},</p>
-                
-                <p>{organizer_name} has invited you to join an activity:</p>
-                
-                {activity_details_html}
-                
-                {f'<div style="background-color: #e8f4f8; padding: 15px; border-radius: 8px; margin: 20px 0;"><p style="margin: 0;"><strong>Personal message:</strong> {custom_message}</p></div>' if custom_message else ''}
-                
-                {weather_html}
-                
-                {suggestions_html}
-                
-                {f'<div style="text-align: center; margin: 30px 0;"><a href="{invite_link}" style="background-color: #2c5aa0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Respond to Invitation</a></div>' if invite_link else ''}
-                
-                <p>We're excited to have you join us!</p>
-                
-                <p>Best regards,<br>The Sunnyside Team</p>
-                
-                <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-                <p style="font-size: 12px; color: #666;">
-                    This email was sent by Sunnyside. If you have any questions, please contact us.
-                </p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        return await self.send_email(to_email, subject, html_content)
+        subject = f"You're invited to {activity_title}!"
+        return await self.send_email(to_email, "activity_invitation", template_params, subject)
     
     async def send_activity_invitation_email_to_guest(
         self,
@@ -296,9 +236,7 @@ class NotificationService:
         Returns:
             bool: True if email was sent successfully, False otherwise
         """
-        subject = f"You're invited to {activity_title} on Sunnyside!"
-        
-        # Extract activity details
+        # Extract and format activity details
         selected_date = activity_details.get('selected_date') if activity_details else None
         selected_days = activity_details.get('selected_days', []) if activity_details else []
         weather_preference = activity_details.get('weather_preference') if activity_details else None
@@ -320,121 +258,30 @@ class NotificationService:
         else:
             date_info = "Flexible dates"
         
-        # Create activity details section
-        activity_details_html = f"""
-        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-            <h3 style="margin-top: 0; color: #2c5aa0;">{activity_title}</h3>
-            <p style="margin-bottom: 10px;">{activity_description}</p>
-            
-            <div style="margin: 15px 0;">
-                <p style="margin: 5px 0;"><strong>📅 Date:</strong> {date_info}</p>
-                {f'<p style="margin: 5px 0;"><strong>🌤️ Preference:</strong> {weather_preference.title()}</p>' if weather_preference else ''}
-                {f'<p style="margin: 5px 0;"><strong>👥 Group size:</strong> {group_size}</p>' if group_size else ''}
-            </div>
-        </div>
-        """
+        # Prepare template parameters
+        template_params = {
+            "to_name": to_name,
+            "organizer_name": organizer_name,
+            "activity_title": activity_title,
+            "activity_description": activity_description,
+            "date_info": date_info,
+            "weather_preference": weather_preference.title() if weather_preference else "",
+            "group_size": str(group_size) if group_size else "",
+            "custom_message": custom_message or "",
+            "invite_link": invite_link or "",
+            "has_custom_message": bool(custom_message),
+            "has_weather_preference": bool(weather_preference),
+            "has_group_size": bool(group_size),
+            "has_invite_link": bool(invite_link),
+            "weather_data": weather_data[:4] if weather_data else [],
+            "suggestions": suggestions[:3] if suggestions else [],
+            "has_weather_data": bool(weather_data),
+            "has_suggestions": bool(suggestions),
+            "additional_suggestions_count": max(0, len(suggestions) - 3) if suggestions else 0
+        }
         
-        # Create weather forecast section
-        weather_html = ""
-        if weather_data and len(weather_data) > 0:
-            weather_items = []
-            for i, day in enumerate(weather_data[:4]):  # Show first 4 days
-                day_name = "Today" if i == 0 else "Tomorrow" if i == 1 else day.get('day', f'Day {i+1}')
-                temp_max = day.get('temperature_max', day.get('temperature', 'N/A'))
-                temp_min = day.get('temperature_min', day.get('temperature', 'N/A'))
-                condition = day.get('condition', day.get('weather_description', 'Unknown'))
-                precipitation = day.get('precipitation', day.get('precipitation_chance', 0))
-                
-                weather_emoji = "☀️" if condition == 'sunny' else "🌧️" if condition == 'rainy' else "☁️"
-                
-                weather_items.append(f"""
-                <div style="display: inline-block; margin: 5px; padding: 10px; background: white; border-radius: 6px; text-align: center; min-width: 80px;">
-                    <div style="font-weight: bold; font-size: 12px;">{day_name}</div>
-                    <div style="font-size: 20px; margin: 5px 0;">{weather_emoji}</div>
-                    <div style="font-size: 12px;">{temp_max}°/{temp_min}°</div>
-                    {f'<div style="font-size: 10px; color: #666;">{int(precipitation)}% rain</div>' if precipitation > 0 else ''}
-                </div>
-                """)
-            
-            weather_html = f"""
-            <div style="background-color: #e3f2fd; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                <h4 style="margin-top: 0; color: #1976d2;">🌤️ Weather Forecast</h4>
-                <div style="text-align: center;">
-                    {''.join(weather_items)}
-                </div>
-            </div>
-            """
-        
-        # Create suggestions section
-        suggestions_html = ""
-        if suggestions and len(suggestions) > 0:
-            suggestion_items = []
-            for suggestion in suggestions[:3]:  # Show first 3 suggestions
-                suggestion_items.append(f"""
-                <div style="margin: 10px 0; padding: 12px; background: white; border-left: 4px solid #ff9800; border-radius: 4px;">
-                    <div style="font-weight: bold; color: #f57c00;">{suggestion.get('title', 'Activity Suggestion')}</div>
-                    <div style="font-size: 14px; color: #666; margin-top: 5px;">{suggestion.get('description', '')}</div>
-                    <div style="font-size: 12px; color: #999; margin-top: 5px;">
-                        {suggestion.get('duration', '')} • {suggestion.get('budget', '')} • {suggestion.get('indoor_outdoor', '')}
-                    </div>
-                </div>
-                """)
-            
-            suggestions_html = f"""
-            <div style="background-color: #fff3e0; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                <h4 style="margin-top: 0; color: #f57c00;">💡 Activity Ideas</h4>
-                {''.join(suggestion_items)}
-                {f'<p style="font-size: 12px; color: #666; text-align: center; margin-top: 10px;">+{len(suggestions) - 3} more suggestions</p>' if len(suggestions) > 3 else ''}
-            </div>
-            """
-        
-        # Create HTML content with Sunnyside introduction for guests
-        html_content = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #2c5aa0;">You're Invited to Join an Activity! 🌞</h2>
-                
-                <p>Hi {to_name},</p>
-                
-                <p>{organizer_name} has invited you to join an activity through <strong>Sunnyside</strong>, the app that makes planning activities with friends easy and fun!</p>
-                
-                <div style="background-color: #e8f4f8; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                    <h4 style="margin-top: 0; color: #2c5aa0;">What is Sunnyside?</h4>
-                    <p style="margin-bottom: 0;">Sunnyside helps friends plan activities by considering weather forecasts, preferences, and availability. No more endless group chats trying to coordinate plans!</p>
-                </div>
-                
-                {activity_details_html}
-                
-                {f'<div style="background-color: #f0f8ff; padding: 15px; border-radius: 8px; margin: 20px 0;"><p style="margin: 0;"><strong>Personal message from {organizer_name}:</strong> {custom_message}</p></div>' if custom_message else ''}
-                
-                {weather_html}
-                
-                {suggestions_html}
-                
-                {f'<div style="text-align: center; margin: 30px 0;"><a href="{invite_link}" style="background-color: #2c5aa0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; font-size: 16px;">Respond to Invitation</a></div>' if invite_link else ''}
-                
-                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center;">
-                    <p style="margin: 0; font-size: 14px; color: #666;">
-                        <strong>New to Sunnyside?</strong> No problem! You can respond to this invitation without creating an account.
-                        If you enjoy the experience, you can always join Sunnyside later to organize your own activities!
-                    </p>
-                </div>
-                
-                <p>We're excited to have you join this activity!</p>
-                
-                <p>Best regards,<br>The Sunnyside Team</p>
-                
-                <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-                <p style="font-size: 12px; color: #666;">
-                    This invitation was sent by {organizer_name} through Sunnyside. You can respond without creating an account.
-                </p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        return await self.send_email(to_email, subject, html_content)
+        subject = f"You're invited to {activity_title} on Sunnyside!"
+        return await self.send_email(to_email, "guest_activity_invitation", template_params, subject)
     
     async def send_contact_request_email(
         self,
@@ -457,37 +304,17 @@ class NotificationService:
         Returns:
             bool: True if email was sent successfully, False otherwise
         """
+        template_params = {
+            "to_name": to_name,
+            "requester_name": requester_name,
+            "message": message or "",
+            "app_link": app_link or get_frontend_url(),
+            "has_message": bool(message),
+            "has_app_link": bool(app_link)
+        }
+        
         subject = f"{requester_name} wants to connect with you on Sunnyside"
-        
-        # Create HTML content
-        html_content = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #2c5aa0;">New Contact Request</h2>
-                
-                <p>Hi {to_name},</p>
-                
-                <p>{requester_name} would like to connect with you on Sunnyside!</p>
-                
-                {f'<div style="background-color: #e8f4f8; padding: 15px; border-radius: 8px; margin: 20px 0;"><p style="margin: 0;"><strong>Message:</strong> {message}</p></div>' if message else ''}
-                
-                <p>You can respond to this request by logging into your Sunnyside account.</p>
-                
-                {f'<div style="text-align: center; margin: 30px 0;"><a href="{app_link}" style="background-color: #2c5aa0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Open Sunnyside</a></div>' if app_link else ''}
-                
-                <p>Best regards,<br>The Sunnyside Team</p>
-                
-                <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-                <p style="font-size: 12px; color: #666;">
-                    This email was sent by Sunnyside. If you have any questions, please contact us.
-                </p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        return await self.send_email(to_email, subject, html_content)
+        return await self.send_email(to_email, "contact_request", template_params, subject)
     
     async def send_account_invitation_email(
         self,
@@ -512,45 +339,22 @@ class NotificationService:
         Returns:
             bool: True if email was sent successfully, False otherwise
         """
-        subject = f"{inviter_name} invited you to join Sunnyside"
-        
         # Create signup link with token if base link provided
         full_signup_link = f"{signup_link}?token={invitation_token}" if signup_link else None
         
-        # Create HTML content
-        html_content = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #2c5aa0;">You're Invited to Join Sunnyside!</h2>
-                
-                <p>Hi{f' {to_name}' if to_name else ''},</p>
-                
-                <p>{inviter_name} has invited you to join Sunnyside, the app that makes planning activities with friends easy and fun!</p>
-                
-                {f'<div style="background-color: #e8f4f8; padding: 15px; border-radius: 8px; margin: 20px 0;"><p style="margin: 0;"><strong>Personal message:</strong> {message}</p></div>' if message else ''}
-                
-                <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                    <h3 style="margin-top: 0; color: #2c5aa0;">What is Sunnyside?</h3>
-                    <p style="margin-bottom: 0;">Sunnyside helps you plan activities with friends by considering weather, preferences, and availability. Create activities, invite friends, and make memories together!</p>
-                </div>
-                
-                {f'<div style="text-align: center; margin: 30px 0;"><a href="{full_signup_link}" style="background-color: #2c5aa0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Join Sunnyside</a></div>' if full_signup_link else ''}
-                
-                <p>Once you create your account, you'll be automatically connected with {inviter_name} and can start planning activities together!</p>
-                
-                <p>Best regards,<br>The Sunnyside Team</p>
-                
-                <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-                <p style="font-size: 12px; color: #666;">
-                    This invitation was sent by {inviter_name} through Sunnyside. If you have any questions, please contact us.
-                </p>
-            </div>
-        </body>
-        </html>
-        """
+        template_params = {
+            "to_name": to_name or "",
+            "inviter_name": inviter_name,
+            "invitation_token": invitation_token,
+            "message": message or "",
+            "signup_link": full_signup_link or "",
+            "has_to_name": bool(to_name),
+            "has_message": bool(message),
+            "has_signup_link": bool(full_signup_link)
+        }
         
-        return await self.send_email(to_email, subject, html_content)
+        subject = f"{inviter_name} invited you to join Sunnyside"
+        return await self.send_email(to_email, "account_invitation", template_params, subject)
     
     async def send_welcome_email(
         self,
@@ -569,49 +373,14 @@ class NotificationService:
         Returns:
             bool: True if email was sent successfully, False otherwise
         """
-        # Temporary solution, sending links to local env during PoC testing, to be removed before launch
-        if (not self.emailjs_service_id or not self.emailjs_public_key or not self.emailjs_welcome_template_id) and is_local_development():
-            logger.info(f"LOCAL DEV: Would send welcome email to {to_email} for user {to_name}")
-            return True
-        elif not self.emailjs_service_id or not self.emailjs_public_key or not self.emailjs_welcome_template_id:
-            logger.error("EmailJS credentials not configured for welcome email. Cannot send email.")
-            return False
+        # Use the new send_email method with welcome template
+        template_params = {
+            "to_name": to_name,
+            "user_name": to_name,
+            "app_link": app_link or get_frontend_url()
+        }
         
-        try:
-            # Prepare the email data for EmailJS with the specific welcome template
-            email_data = {
-                "service_id": self.emailjs_service_id,
-                "template_id": self.emailjs_welcome_template_id,
-                "user_id": self.emailjs_public_key,
-                "template_params": {
-                    "to_email": to_email,
-                    "to_name": to_name,
-                    "user_name": to_name,
-                    "app_link": app_link or get_frontend_url(),
-                    "from_name": self.from_name,
-                    "from_email": self.from_email
-                }
-            }
-            
-            # Send the email via EmailJS API
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    self.emailjs_api_url,
-                    json=email_data,
-                    headers={"Content-Type": "application/json"}
-                )
-            
-            # Check if the email was sent successfully
-            if response.status_code == 200:
-                logger.info(f"Welcome email sent successfully to {to_email}")
-                return True
-            else:
-                logger.error(f"Failed to send welcome email to {to_email}. Status code: {response.status_code}, Response: {response.text}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error sending welcome email to {to_email}: {str(e)}")
-            return False
+        return await self.send_email(to_email, "welcome", template_params, f"Welcome to Sunnyside, {to_name}!")
     
     async def send_activity_cancellation_email(
         self,
@@ -636,40 +405,17 @@ class NotificationService:
         Returns:
             bool: True if email was sent successfully, False otherwise
         """
+        template_params = {
+            "to_name": to_name,
+            "organizer_name": organizer_name,
+            "activity_title": activity_title,
+            "activity_description": activity_description,
+            "cancellation_reason": cancellation_reason or "",
+            "has_cancellation_reason": bool(cancellation_reason)
+        }
+        
         subject = f"Activity Cancelled: {activity_title}"
-        
-        # Create HTML content
-        html_content = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #d32f2f;">Activity Cancelled</h2>
-                
-                <p>Hi {to_name},</p>
-                
-                <p>We're sorry to inform you that the following activity has been cancelled by {organizer_name}:</p>
-                
-                <div style="background-color: #ffebee; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #d32f2f;">
-                    <h3 style="margin-top: 0; color: #d32f2f;">{activity_title}</h3>
-                    <p style="margin-bottom: 0;">{activity_description}</p>
-                </div>
-                
-                {f'<div style="background-color: #f5f5f5; padding: 15px; border-radius: 8px; margin: 20px 0;"><p style="margin: 0;"><strong>Reason for cancellation:</strong> {cancellation_reason}</p></div>' if cancellation_reason else ''}
-                
-                <p>We apologize for any inconvenience this may cause. We hope to see you at future activities!</p>
-                
-                <p>Best regards,<br>The Sunnyside Team</p>
-                
-                <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-                <p style="font-size: 12px; color: #666;">
-                    This email was sent to notify you of an activity cancellation on Sunnyside.
-                </p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        return await self.send_email(to_email, subject, html_content)
+        return await self.send_email(to_email, "activity_cancellation", template_params, subject)
     
     async def send_activity_response_notification_email(
         self,
@@ -696,8 +442,6 @@ class NotificationService:
         Returns:
             bool: True if email was sent successfully, False otherwise
         """
-        subject = f"New response to {activity_title}"
-        
         # Format response with emoji
         response_emoji = {
             "yes": "✅",
@@ -705,48 +449,412 @@ class NotificationService:
             "maybe": "🤔"
         }.get(response.lower(), "📝")
         
-        response_text = f"{response_emoji} {response.title()}"
+        template_params = {
+            "to_name": to_name,
+            "responder_name": responder_name,
+            "activity_title": activity_title,
+            "response": response.title(),
+            "response_emoji": response_emoji,
+            "response_text": f"{response_emoji} {response.title()}",
+            "availability_note": availability_note or "",
+            "venue_suggestion": venue_suggestion or "",
+            "has_availability_note": bool(availability_note),
+            "has_venue_suggestion": bool(venue_suggestion),
+            "app_link": get_frontend_url()
+        }
         
-        # Create HTML content
-        html_content = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #2c5aa0;">New Activity Response</h2>
-                
-                <p>Hi {to_name},</p>
-                
-                <p><strong>{responder_name}</strong> has responded to your activity invitation:</p>
-                
-                <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                    <h3 style="margin-top: 0; color: #2c5aa0;">{activity_title}</h3>
-                    <div style="font-size: 18px; margin: 15px 0;">
-                        <strong>Response:</strong> {response_text}
-                    </div>
-                </div>
-                
-                {f'<div style="background-color: #e8f4f8; padding: 15px; border-radius: 8px; margin: 20px 0;"><h4 style="margin-top: 0; color: #2c5aa0;">Availability Note:</h4><p style="margin-bottom: 0;">{availability_note}</p></div>' if availability_note else ''}
-                
-                {f'<div style="background-color: #fff3e0; padding: 15px; border-radius: 8px; margin: 20px 0;"><h4 style="margin-top: 0; color: #f57c00;">Venue Suggestion:</h4><p style="margin-bottom: 0;">{venue_suggestion}</p></div>' if venue_suggestion else ''}
-                
-                <p>You can view all responses and manage your activity in your Sunnyside dashboard.</p>
-                
-                <div style="text-align: center; margin: 30px 0;">
-                    <a href="{get_frontend_url()}" style="background-color: #2c5aa0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">View Activity</a>
-                </div>
-                
-                <p>Best regards,<br>The Sunnyside Team</p>
-                
-                <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-                <p style="font-size: 12px; color: #666;">
-                    This email was sent to notify you of a response to your activity on Sunnyside.
-                </p>
-            </div>
-        </body>
-        </html>
+        subject = f"New response to {activity_title}"
+        return await self.send_email(to_email, "activity_response", template_params, subject)
+    
+    async def send_activity_response_changed_notification_email(
+        self,
+        to_email: str,
+        to_name: str,
+        responder_name: str,
+        activity_title: str,
+        previous_response: str,
+        new_response: str,
+        availability_note: Optional[str] = None,
+        venue_suggestion: Optional[str] = None
+    ) -> bool:
+        """
+        Send an email notification to the organizer when someone changes their response to an activity.
+        
+        Args:
+            to_email: Organizer's email address
+            to_name: Organizer's name
+            responder_name: Name of the person who changed their response
+            activity_title: Title of the activity
+            previous_response: The previous response (yes, no, maybe)
+            new_response: The new response (yes, no, maybe)
+            availability_note: Optional availability note from responder
+            venue_suggestion: Optional venue suggestion from responder
+            
+        Returns:
+            bool: True if email was sent successfully, False otherwise
+        """
+        # Format responses with emoji
+        response_emoji = {
+            "yes": "✅",
+            "no": "❌",
+            "maybe": "🤔"
+        }
+        
+        previous_response_emoji = response_emoji.get(previous_response.lower(), "📝")
+        new_response_emoji = response_emoji.get(new_response.lower(), "📝")
+        
+        template_params = {
+            "to_name": to_name,
+            "responder_name": responder_name,
+            "activity_title": activity_title,
+            "previous_response": previous_response.title(),
+            "new_response": new_response.title(),
+            "previous_response_emoji": previous_response_emoji,
+            "new_response_emoji": new_response_emoji,
+            "previous_response_text": f"{previous_response_emoji} {previous_response.title()}",
+            "new_response_text": f"{new_response_emoji} {new_response.title()}",
+            "availability_note": availability_note or "",
+            "venue_suggestion": venue_suggestion or "",
+            "has_availability_note": bool(availability_note),
+            "has_venue_suggestion": bool(venue_suggestion),
+            "app_link": get_frontend_url()
+        }
+        
+        subject = f"Response changed for {activity_title}"
+        return await self.send_email(to_email, "activity_response_changed", template_params, subject)
+    
+    async def send_activity_finalization_email(
+        self,
+        to_email: str,
+        to_name: str,
+        organizer_name: str,
+        activity_title: str,
+        activity_description: str,
+        selected_venue: Dict[str, Any],
+        final_message: Optional[str] = None,
+        activity_details: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Send an activity finalization email to confirmed attendees.
+        
+        Args:
+            to_email: Recipient email address
+            to_name: Recipient name
+            organizer_name: Name of the activity organizer
+            activity_title: Title of the activity
+            activity_description: Description of the activity
+            selected_venue: Selected venue/recommendation details
+            final_message: Optional final message from organizer
+            activity_details: Additional activity details
+            
+        Returns:
+            bool: True if email was sent successfully, False otherwise
+        """
+        # Extract activity details
+        selected_date = activity_details.get('selected_date') if activity_details else None
+        selected_days = activity_details.get('selected_days', []) if activity_details else []
+        timeframe = activity_details.get('timeframe') if activity_details else None
+        
+        # Format date information
+        date_info = ""
+        if selected_date:
+            from datetime import datetime
+            try:
+                date_obj = datetime.fromisoformat(selected_date.replace('Z', '+00:00'))
+                date_info = date_obj.strftime('%A, %B %d, %Y')
+            except:
+                date_info = selected_date
+        elif selected_days:
+            date_info = ', '.join(selected_days)
+        else:
+            date_info = "Date TBD"
+        
+        # Extract venue details
+        venue_name = selected_venue.get('name', 'Selected Venue')
+        venue_description = selected_venue.get('description', '')
+        venue_category = selected_venue.get('category', '')
+        venue_price_range = selected_venue.get('price_range', '')
+        
+        template_params = {
+            "to_name": to_name,
+            "organizer_name": organizer_name,
+            "activity_title": activity_title,
+            "activity_description": activity_description,
+            "date_info": date_info,
+            "timeframe": timeframe or "",
+            "venue_name": venue_name,
+            "venue_description": venue_description,
+            "venue_category": venue_category,
+            "venue_price_range": venue_price_range,
+            "final_message": final_message or "",
+            "has_timeframe": bool(timeframe),
+            "has_venue_category": bool(venue_category),
+            "has_venue_price_range": bool(venue_price_range),
+            "has_final_message": bool(final_message)
+        }
+        
+        subject = f"Activity Finalized: {activity_title}"
+        return await self.send_email(to_email, "activity_finalized", template_params, subject)
+    
+    async def send_deadline_reminder_email(
+        self,
+        to_email: str,
+        to_name: str,
+        activity_title: str,
+        activity_description: str,
+        deadline: datetime,
+        activity_details: Optional[Dict[str, Any]] = None,
+        invite_link: Optional[str] = None
+    ) -> bool:
+        """
+        Send a deadline reminder email to organizers.
+        
+        Args:
+            to_email: Organizer's email address
+            to_name: Organizer's name
+            activity_title: Title of the activity
+            activity_description: Description of the activity
+            deadline: The deadline datetime
+            activity_details: Additional activity details
+            invite_link: Link to manage the activity
+            
+        Returns:
+            bool: True if email was sent successfully, False otherwise
         """
         
-        return await self.send_email(to_email, subject, html_content)
+        time_diff = deadline - datetime.utcnow()
+        hours_left = int(time_diff.total_seconds() / 3600)
+        
+        if hours_left <= 0:
+            deadline_text = "The deadline has passed"
+            urgency_color = "#d32f2f"
+            urgency_bg = "#ffebee"
+            urgency_level = "critical"
+        elif hours_left <= 2:
+            deadline_text = f"Only {hours_left} hour{'s' if hours_left != 1 else ''} left!"
+            urgency_color = "#f57c00"
+            urgency_bg = "#fff3e0"
+            urgency_level = "high"
+        elif hours_left <= 24:
+            deadline_text = f"{hours_left} hours left"
+            urgency_color = "#ff9800"
+            urgency_bg = "#fff3e0"
+            urgency_level = "medium"
+        else:
+            days_left = int(hours_left / 24)
+            deadline_text = f"{days_left} day{'s' if days_left != 1 else ''} left"
+            urgency_color = "#2c5aa0"
+            urgency_bg = "#e3f2fd"
+            urgency_level = "low"
+        
+        # Format deadline date
+        deadline_formatted = deadline.strftime('%A, %B %d, %Y at %I:%M %p')
+        
+        # Extract activity details
+        selected_date = activity_details.get('selected_date') if activity_details else None
+        selected_days = activity_details.get('selected_days', []) if activity_details else []
+        
+        # Format activity date information
+        date_info = ""
+        if selected_date:
+            try:
+                date_obj = datetime.fromisoformat(selected_date.replace('Z', '+00:00'))
+                date_info = date_obj.strftime('%A, %B %d, %Y')
+            except:
+                date_info = selected_date
+        elif selected_days:
+            date_info = ', '.join(selected_days)
+        else:
+            date_info = "Flexible dates"
+        
+        template_params = {
+            "to_name": to_name,
+            "activity_title": activity_title,
+            "activity_description": activity_description,
+            "date_info": date_info,
+            "deadline_formatted": deadline_formatted,
+            "deadline_text": deadline_text,
+            "urgency_color": urgency_color,
+            "urgency_bg": urgency_bg,
+            "urgency_level": urgency_level,
+            "hours_left": hours_left,
+            "invite_link": invite_link or "",
+            "has_invite_link": bool(invite_link)
+        }
+        
+        subject = f"Deadline Reminder: {activity_title}"
+        return await self.send_email(to_email, "deadline_reminder", template_params, subject)
+    
+    async def send_password_reset_email(
+        self,
+        to_email: str,
+        to_name: str,
+        reset_token: str,
+        reset_link: Optional[str] = None
+    ) -> bool:
+        """
+        Send a password reset email to a user.
+        
+        Args:
+            to_email: Recipient email address
+            to_name: Recipient name
+            reset_token: Unique token for password reset
+            reset_link: Link to reset password with token
+            
+        Returns:
+            bool: True if email was sent successfully, False otherwise
+        """
+        # Create reset link with token if base link provided
+        full_reset_link = f"{reset_link}?token={reset_token}" if reset_link else None
+        
+        template_params = {
+            "to_name": to_name,
+            "reset_token": reset_token,
+            "reset_link": full_reset_link or "",
+            "has_reset_link": bool(full_reset_link)
+        }
+        
+        subject = "Reset your Sunnyside password"
+        return await self.send_email(to_email, "password_reset", template_params, subject)
+    
+    async def send_contact_request_accepted_email(
+        self,
+        to_email: str,
+        to_name: str,
+        accepter_name: str,
+        app_link: Optional[str] = None
+    ) -> bool:
+        """
+        Send an email notification when a contact request is accepted.
+        
+        Args:
+            to_email: Original requester's email address
+            to_name: Original requester's name
+            accepter_name: Name of the person who accepted the request
+            app_link: Link to the app
+            
+        Returns:
+            bool: True if email was sent successfully, False otherwise
+        """
+        template_params = {
+            "to_name": to_name,
+            "accepter_name": accepter_name,
+            "app_link": app_link or get_frontend_url(),
+            "has_app_link": bool(app_link)
+        }
+        
+        subject = f"{accepter_name} accepted your contact request on Sunnyside"
+        return await self.send_email(to_email, "contact_accepted", template_params, subject)
+    
+    async def send_activity_update_email(
+        self,
+        to_email: str,
+        to_name: str,
+        organizer_name: str,
+        activity_title: str,
+        activity_description: str,
+        update_message: str,
+        activity_details: Optional[Dict[str, Any]] = None,
+        activity_link: Optional[str] = None
+    ) -> bool:
+        """
+        Send an email notification when an activity is updated.
+        
+        Args:
+            to_email: Recipient email address
+            to_name: Recipient name
+            organizer_name: Name of the activity organizer
+            activity_title: Title of the activity
+            activity_description: Description of the activity
+            update_message: Message describing what was updated
+            activity_details: Additional activity details
+            activity_link: Link to view the activity
+            
+        Returns:
+            bool: True if email was sent successfully, False otherwise
+        """
+        # Extract and format activity details
+        selected_date = activity_details.get('selected_date') if activity_details else None
+        selected_days = activity_details.get('selected_days', []) if activity_details else []
+        
+        # Format date information
+        date_info = ""
+        if selected_date:
+            from datetime import datetime
+            try:
+                date_obj = datetime.fromisoformat(selected_date.replace('Z', '+00:00'))
+                date_info = date_obj.strftime('%A, %B %d, %Y')
+            except:
+                date_info = selected_date
+        elif selected_days:
+            date_info = ', '.join(selected_days)
+        else:
+            date_info = "Flexible dates"
+        
+        template_params = {
+            "to_name": to_name,
+            "organizer_name": organizer_name,
+            "activity_title": activity_title,
+            "activity_description": activity_description,
+            "update_message": update_message,
+            "date_info": date_info,
+            "activity_link": activity_link or "",
+            "has_activity_link": bool(activity_link)
+        }
+        
+        subject = f"Activity Updated: {activity_title}"
+        return await self.send_email(to_email, "activity_update", template_params, subject)
+    
+    async def send_upcoming_activity_reminder_email(
+        self,
+        to_email: str,
+        to_name: str,
+        organizer_name: str,
+        activity_title: str,
+        activity_description: str,
+        activity_date: str,
+        activity_time: Optional[str] = None,
+        venue_info: Optional[Dict[str, Any]] = None,
+        activity_link: Optional[str] = None
+    ) -> bool:
+        """
+        Send a reminder email for an upcoming activity.
+        
+        Args:
+            to_email: Recipient email address
+            to_name: Recipient name
+            organizer_name: Name of the activity organizer
+            activity_title: Title of the activity
+            activity_description: Description of the activity
+            activity_date: Date of the activity
+            activity_time: Time of the activity
+            venue_info: Venue information
+            activity_link: Link to view the activity
+            
+        Returns:
+            bool: True if email was sent successfully, False otherwise
+        """
+        # Extract venue details if provided
+        venue_name = venue_info.get('name', '') if venue_info else ''
+        venue_address = venue_info.get('address', '') if venue_info else ''
+        
+        template_params = {
+            "to_name": to_name,
+            "organizer_name": organizer_name,
+            "activity_title": activity_title,
+            "activity_description": activity_description,
+            "activity_date": activity_date,
+            "activity_time": activity_time or "",
+            "venue_name": venue_name,
+            "venue_address": venue_address,
+            "activity_link": activity_link or "",
+            "has_activity_time": bool(activity_time),
+            "has_venue_info": bool(venue_info),
+            "has_activity_link": bool(activity_link)
+        }
+        
+        subject = f"Reminder: {activity_title} is tomorrow!"
+        return await self.send_email(to_email, "upcoming_activity_reminder", template_params, subject)
     
     async def create_notification(
         self, 

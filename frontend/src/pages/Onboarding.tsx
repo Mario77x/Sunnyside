@@ -6,9 +6,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRight, MapPin, User, Heart, Loader2, UserPlus } from 'lucide-react';
+import { ArrowRight, MapPin, User, Heart, Loader2, UserPlus, Calendar } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { showError, showSuccess } from '@/utils/toast';
+import { apiService } from '@/services/api';
 
 const Onboarding = () => {
   const navigate = useNavigate();
@@ -35,18 +36,25 @@ const Onboarding = () => {
   });
   const { signup, isLoading } = useAuth();
 
-  // Check for invitation token in URL parameters
+  // Check for invitation token and calendar connection status in URL parameters
   useEffect(() => {
     const token = searchParams.get('token');
+    const calendarConnected = searchParams.get('calendar_connected');
+    
     if (token) {
       setInvitationToken(token);
       setIsInvitedUser(true);
       showSuccess('Welcome! Complete your signup to connect with your friend.');
     }
+    
+    if (calendarConnected === 'true') {
+      showSuccess('Google Calendar connected successfully!');
+      setStep(5); // Move to review step
+    }
   }, [searchParams]);
 
   const handleNext = async () => {
-    if (step < 4) {
+    if (step < 5) {
       setStep(step + 1);
     } else {
       // Submit signup data to backend
@@ -97,6 +105,8 @@ const Onboarding = () => {
       case 3:
         return Object.values(formData.preferences).some(Boolean);
       case 4:
+        return true; // Calendar integration step (optional)
+      case 5:
         return true; // Review step
       default:
         return false;
@@ -126,7 +136,7 @@ const Onboarding = () => {
 
         {/* Progress Indicator */}
         <div className="flex items-center justify-center mb-8">
-          {[1, 2, 3, 4].map((stepNumber) => (
+          {[1, 2, 3, 4, 5].map((stepNumber) => (
             <React.Fragment key={stepNumber}>
               <div 
                 className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
@@ -138,7 +148,7 @@ const Onboarding = () => {
               >
                 {stepNumber}
               </div>
-              {stepNumber < 4 && (
+              {stepNumber < 5 && (
                 <div 
                   className={`w-8 h-1 mx-2 ${
                     stepNumber < step ? 'bg-blue-500' : 'bg-gray-200'
@@ -156,13 +166,15 @@ const Onboarding = () => {
               {step === 1 && <><User className="w-5 h-5" /> Basic Info</>}
               {step === 2 && <><MapPin className="w-5 h-5" /> Location</>}
               {step === 3 && <><Heart className="w-5 h-5" /> Preferences</>}
-              {step === 4 && <><User className="w-5 h-5" /> Review & Create</>}
+              {step === 4 && <><Calendar className="w-5 h-5" /> Integrations</>}
+              {step === 5 && <><User className="w-5 h-5" /> Review & Create</>}
             </CardTitle>
             <CardDescription>
               {step === 1 && "Tell us about yourself"}
               {step === 2 && "Where are you based?"}
               {step === 3 && "What activities do you enjoy?"}
-              {step === 4 && "Review your information and create your account"}
+              {step === 4 && "Connect your calendar (optional)"}
+              {step === 5 && "Review your information and create your account"}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -271,6 +283,58 @@ const Onboarding = () => {
 
             {step === 4 && (
               <div className="space-y-4">
+                <div className="text-center">
+                  <Calendar className="w-16 h-16 mx-auto mb-4 text-blue-600" />
+                  <h3 className="text-lg font-semibold mb-2">Connect Google Calendar</h3>
+                  <p className="text-sm text-gray-600 mb-6">
+                    Connect your Google Calendar to get personalized availability suggestions when planning activities.
+                    This is completely optional and you can skip this step.
+                  </p>
+                </div>
+                
+                <div className="space-y-4">
+                  <Button
+                    onClick={async () => {
+                      try {
+                        const result = await apiService.initiateGoogleCalendarAuth();
+                        if (result.data?.authorization_url) {
+                          window.location.href = result.data.authorization_url;
+                        } else {
+                          showError(result.error || 'Failed to initiate Google Calendar connection');
+                        }
+                      } catch (error) {
+                        console.error('Calendar auth error:', error);
+                        showError('Unable to connect to Google Calendar. Please try again later.');
+                      }
+                    }}
+                    className="w-full"
+                    style={{ backgroundColor: '#1155cc', color: 'white' }}
+                  >
+                    <Calendar className="w-4 h-4 mr-2" />
+                    Connect Google Calendar
+                  </Button>
+                  
+                  <div className="text-center">
+                    <Button
+                      variant="ghost"
+                      onClick={() => setStep(5)}
+                      className="text-gray-500"
+                    >
+                      Skip for now
+                    </Button>
+                  </div>
+                </div>
+                
+                <div className="text-xs text-gray-500 space-y-1">
+                  <p>• We only read your calendar to suggest available times</p>
+                  <p>• We never create, modify, or delete calendar events</p>
+                  <p>• You can disconnect at any time from your account settings</p>
+                </div>
+              </div>
+            )}
+
+            {step === 5 && (
+              <div className="space-y-4">
                 <div className="p-4 bg-gray-50 rounded-lg space-y-3">
                   <div><strong>Name:</strong> {formData.name}</div>
                   <div><strong>Email:</strong> {formData.email}</div>
@@ -314,7 +378,7 @@ const Onboarding = () => {
                   </>
                 ) : (
                   <>
-                    {step === 4 ? 'Create Account' : 'Next'}
+                    {step === 5 ? 'Create Account' : 'Next'}
                     <ArrowRight className="w-4 h-4 ml-2" />
                   </>
                 )}

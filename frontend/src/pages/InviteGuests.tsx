@@ -5,10 +5,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Plus, Users, Mail, MessageSquare, X, Send, MapPin, Star, Loader2, Cloud, Sun, CloudRain, Calendar, Lightbulb, ThermometerSun } from 'lucide-react';
+import { ArrowLeft, Plus, Users, Mail, MessageSquare, X, Send, MapPin, Star, Loader2, Cloud, Sun, CloudRain, Calendar, Lightbulb, ThermometerSun, Clock, Settings } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService, Activity } from '@/services/api';
+import { calculateDeadline, getDeadlineText } from '@/utils/deadlineCalculator';
 
 const InviteGuests = () => {
   const navigate = useNavigate();
@@ -20,6 +21,12 @@ const InviteGuests = () => {
   const [customMessage, setCustomMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [guestExperienceLink, setGuestExperienceLink] = useState<string | null>(null);
+  
+  // Deadline configuration state
+  const [deadline, setDeadline] = useState<Date | null>(null);
+  const [isCustomDeadline, setIsCustomDeadline] = useState(false);
+  const [customDeadlineDate, setCustomDeadlineDate] = useState('');
+  const [customDeadlineTime, setCustomDeadlineTime] = useState('');
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -51,10 +58,58 @@ const InviteGuests = () => {
       }
       
       setCustomMessage(`Hi! I'm organizing ${location.state.activity.title.toLowerCase()} and would love for you to join. We're looking at ${dateText}. Let me know if you're interested!`);
+      
+      // Calculate default deadline
+      calculateDefaultDeadline(location.state.activity);
     } else {
       navigate('/');
     }
   }, [location, navigate, isAuthenticated]);
+
+  const calculateDefaultDeadline = (activityData: Activity) => {
+    let activityDate: Date;
+    
+    if (activityData.selected_date) {
+      // Fixed date scenario
+      activityDate = new Date(activityData.selected_date);
+    } else {
+      // Flexible date scenario - use 48 hours from now as per PRD
+      activityDate = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    }
+    
+    const calculatedDeadline = calculateDeadline({ activityDate });
+    setDeadline(calculatedDeadline);
+    
+    // Set default custom deadline values
+    const deadlineDate = calculatedDeadline.toISOString().split('T')[0];
+    const deadlineTime = calculatedDeadline.toTimeString().slice(0, 5);
+    setCustomDeadlineDate(deadlineDate);
+    setCustomDeadlineTime(deadlineTime);
+  };
+
+  const handleCustomDeadlineToggle = () => {
+    setIsCustomDeadline(!isCustomDeadline);
+  };
+
+  const handleCustomDeadlineChange = () => {
+    if (customDeadlineDate && customDeadlineTime) {
+      const customDeadline = new Date(`${customDeadlineDate}T${customDeadlineTime}`);
+      setDeadline(customDeadline);
+    }
+  };
+
+  const getDeadlineDisplayText = () => {
+    if (!deadline) return '';
+    
+    const now = new Date();
+    const isFlexible = !activity?.selected_date;
+    
+    if (isFlexible) {
+      return `Default: 48 hours from now (${getDeadlineText(deadline, now)})`;
+    } else {
+      return `Default: ${getDeadlineText(deadline, now)}`;
+    }
+  };
 
   const addInvitee = () => {
     if (newInvitee.name && (newInvitee.email || newInvitee.phone)) {
@@ -72,6 +127,13 @@ const InviteGuests = () => {
 
     try {
       setIsLoading(true);
+      
+      // Update activity with deadline before sending invites
+      if (deadline) {
+        await apiService.updateActivity(activity.id, {
+          deadline: deadline.toISOString()
+        });
+      }
       
       const response = await apiService.inviteGuests(activity.id, {
         invitees: invitees.map(inv => ({ name: inv.name, email: inv.email })),
@@ -391,6 +453,111 @@ const InviteGuests = () => {
           </CardContent>
         </Card>
 
+        {/* Deadline Configuration */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Clock className="w-5 h-5" />
+              Response Deadline
+            </CardTitle>
+            <CardDescription>
+              Set when guests need to respond by. This helps you plan better and ensures timely responses.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Default Deadline Display */}
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="w-4 h-4 text-blue-600" />
+                <span className="font-medium text-blue-900">Default Deadline</span>
+              </div>
+              <div className="text-sm text-blue-800">
+                {getDeadlineDisplayText()}
+              </div>
+              {deadline && (
+                <div className="text-xs text-blue-600 mt-1">
+                  {deadline.toLocaleDateString('en-US', {
+                    weekday: 'long',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Custom Deadline Toggle */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-medium">Customize Deadline</div>
+                <div className="text-sm text-gray-600">Set a specific date and time for responses</div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCustomDeadlineToggle}
+                className="flex items-center gap-2"
+              >
+                <Settings className="w-4 h-4" />
+                {isCustomDeadline ? 'Use Default' : 'Customize'}
+              </Button>
+            </div>
+
+            {/* Custom Deadline Inputs */}
+            {isCustomDeadline && (
+              <div className="space-y-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Date
+                    </label>
+                    <Input
+                      type="date"
+                      value={customDeadlineDate}
+                      onChange={(e) => {
+                        setCustomDeadlineDate(e.target.value);
+                        if (e.target.value && customDeadlineTime) {
+                          handleCustomDeadlineChange();
+                        }
+                      }}
+                      min={new Date().toISOString().split('T')[0]}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Time
+                    </label>
+                    <Input
+                      type="time"
+                      value={customDeadlineTime}
+                      onChange={(e) => {
+                        setCustomDeadlineTime(e.target.value);
+                        if (customDeadlineDate && e.target.value) {
+                          handleCustomDeadlineChange();
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+                {customDeadlineDate && customDeadlineTime && (
+                  <div className="text-sm text-gray-600">
+                    Custom deadline: {new Date(`${customDeadlineDate}T${customDeadlineTime}`).toLocaleDateString('en-US', {
+                      weekday: 'long',
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Enhanced Invitation Preview */}
         {invitees.length > 0 && (
           <Card className="mb-6">
@@ -470,6 +637,35 @@ const InviteGuests = () => {
                           +{activity.suggestions.length - 2} more suggestions
                         </div>
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Deadline Information */}
+                {deadline && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-red-500" />
+                      <strong className="text-sm">Response Deadline:</strong>
+                    </div>
+                    <div className="p-2 bg-red-50 border border-red-200 rounded text-center">
+                      <div className="font-medium text-red-900">
+                        {deadline.toLocaleDateString('en-US', {
+                          weekday: 'long',
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric'
+                        })}
+                      </div>
+                      <div className="text-sm text-red-700">
+                        {deadline.toLocaleTimeString('en-US', {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </div>
+                      <div className="text-xs text-red-600 mt-1">
+                        {getDeadlineText(deadline)}
+                      </div>
                     </div>
                   </div>
                 )}

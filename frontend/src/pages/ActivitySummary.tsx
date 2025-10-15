@@ -18,6 +18,7 @@ import { ArrowLeft, Users, Calendar, Mail, MessageSquare, CheckCircle, Clock, XC
 import { apiService } from '@/services/api';
 import { showSuccess, showError } from '@/utils/toast';
 import { useAuth } from '@/contexts/AuthContext';
+import { getDeadlineText, getDeadlineStatus } from '@/utils/deadlineCalculator';
 
 const ActivitySummary = () => {
   const navigate = useNavigate();
@@ -286,6 +287,33 @@ const ActivitySummary = () => {
                 <h4 className="font-medium text-sm text-gray-600 mb-1">Weather Preference</h4>
                 <Badge variant="outline">{activity.weatherPreference}</Badge>
               </div>
+              {activity.deadline && (
+                <div>
+                  <h4 className="font-medium text-sm text-gray-600 mb-1">Response Deadline</h4>
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-orange-600" />
+                    <span className="text-sm">
+                      {new Date(activity.deadline).toLocaleDateString('en-US', {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit'
+                      })}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className={`text-xs ${
+                        getDeadlineStatus(new Date(activity.deadline)) === 'passed' ? 'text-red-600 border-red-300' :
+                        getDeadlineStatus(new Date(activity.deadline)) === 'warning' ? 'text-orange-600 border-orange-300' :
+                        'text-blue-600 border-blue-300'
+                      }`}
+                    >
+                      {getDeadlineText(new Date(activity.deadline))}
+                    </Badge>
+                  </div>
+                </div>
+              )}
             </div>
             
             <div>

@@ -15,7 +15,10 @@ from backend.models.activity import (
     Invitee,
     InviteeResponse,
     UserResponseRequest,
-    ActivitySummaryResponse
+    ActivitySummaryResponse,
+    AIRecommendation,
+    RecommendationResponse,
+    FinalizeActivityRequest
 )
 from backend.models.user import UserResponse
 from backend.auth import get_current_user, security
@@ -68,11 +71,16 @@ async def get_activities_for_user(db: AsyncIOMotorDatabase, user_id: str) -> Lis
     return activities
 
 
-def convert_activity_to_response(activity: dict) -> ActivityResponse:
+async def convert_activity_to_response(activity: dict, db: AsyncIOMotorDatabase) -> ActivityResponse:
     """Convert database activity document to ActivityResponse model."""
+    # Get organizer name
+    organizer = await db.users.find_one({"_id": activity["organizer_id"]})
+    organizer_name = organizer["name"] if organizer else "Unknown"
+    
     return ActivityResponse(
         id=str(activity["_id"]),
         organizer_id=str(activity["organizer_id"]),
+        organizer_name=organizer_name,
         title=activity["title"],
         description=activity.get("description"),
         status=activity.get("status", ActivityStatus.PLANNING),
@@ -82,6 +90,7 @@ def convert_activity_to_response(activity: dict) -> ActivityResponse:
         weather_preference=activity.get("weather_preference"),
         selected_date=activity.get("selected_date"),
         selected_days=activity.get("selected_days", []),
+        deadline=activity.get("deadline"),
         weather_data=activity.get("weather_data", []),
         suggestions=activity.get("suggestions", []),
         invitees=activity.get("invitees", []),
@@ -114,7 +123,7 @@ async def create_activity(
         created_activity = await create_activity_in_db(db, activity_dict)
         
         # Convert to response model
-        return convert_activity_to_response(created_activity)
+        return await convert_activity_to_response(created_activity, db)
         
     except HTTPException:
         raise
@@ -143,7 +152,11 @@ async def get_user_activities(
         activities = await get_activities_for_user(db, current_user.id)
         
         # Convert to response models
-        return [convert_activity_to_response(activity) for activity in activities]
+        response_activities = []
+        for activity in activities:
+            response_activity = await convert_activity_to_response(activity, db)
+            response_activities.append(response_activity)
+        return response_activities
         
     except HTTPException:
         raise
@@ -199,7 +212,7 @@ async def get_activity(
             )
         
         # Convert to response model
-        return convert_activity_to_response(activity)
+        return await convert_activity_to_response(activity, db)
         
     except HTTPException:
         raise
@@ -263,7 +276,7 @@ async def update_activity(
         updated_activity = await db.activities.find_one({"_id": ObjectId(activity_id)})
         
         # Convert to response model
-        return convert_activity_to_response(updated_activity)
+        return await convert_activity_to_response(updated_activity, db)
         
     except HTTPException:
         raise
@@ -340,7 +353,8 @@ async def invite_guests_to_activity(
                 email=email,
                 response=InviteeResponse.PENDING,
                 availability_note=None,
-                venue_suggestion=None
+                venue_suggestion=None,
+                previous_response=None
             )
             
             new_invitees.append(invitee.model_dump())
@@ -512,7 +526,8 @@ async def create_test_invite(
                     "response": InviteeResponse.PENDING.value,
                     "availability_note": None,
                     "venue_suggestion": None,
-                    "preferences": {}
+                    "preferences": {},
+                    "previous_response": None
                 },
                 {
                     "id": str(ObjectId()),
@@ -521,7 +536,8 @@ async def create_test_invite(
                     "response": InviteeResponse.PENDING.value,
                     "availability_note": None,
                     "venue_suggestion": None,
-                    "preferences": {}
+                    "preferences": {},
+                    "previous_response": None
                 },
                 {
                     "id": str(ObjectId()),
@@ -530,7 +546,8 @@ async def create_test_invite(
                     "response": InviteeResponse.PENDING.value,
                     "availability_note": None,
                     "venue_suggestion": None,
-                    "preferences": {}
+                    "preferences": {},
+                    "previous_response": None
                 }
             ]
         }
@@ -539,7 +556,7 @@ async def create_test_invite(
         created_activity = await create_activity_in_db(db, activity_data)
         
         # Convert to response model
-        return convert_activity_to_response(created_activity)
+        return await convert_activity_to_response(created_activity, db)
         
     except HTTPException:
         raise
@@ -749,21 +766,29 @@ async def submit_user_response(
                 detail="You are not invited to this activity"
             )
         
+        # Check if this is a response change (user already has a response)
+        current_response = activity["invitees"][invitee_index].get("response")
+        is_response_change = current_response and current_response != InviteeResponse.PENDING.value
+        
+        # Store previous response if this is a change
+        update_fields = {
+            f"invitees.{invitee_index}.response": response_data.response.value,
+            f"invitees.{invitee_index}.availability_note": response_data.availability_note,
+            f"invitees.{invitee_index}.preferences": response_data.preferences or {},
+            f"invitees.{invitee_index}.venue_suggestion": response_data.venue_suggestion,
+            "updated_at": datetime.utcnow()
+        }
+        
+        if is_response_change:
+            update_fields[f"invitees.{invitee_index}.previous_response"] = current_response
+        
         # Update the user's response in the activity
         update_result = await db.activities.update_one(
             {
                 "_id": ObjectId(activity_id),
                 f"invitees.{invitee_index}.email": current_user.email
             },
-            {
-                "$set": {
-                    f"invitees.{invitee_index}.response": response_data.response.value,
-                    f"invitees.{invitee_index}.availability_note": response_data.availability_note,
-                    f"invitees.{invitee_index}.preferences": response_data.preferences or {},
-                    f"invitees.{invitee_index}.venue_suggestion": response_data.venue_suggestion,
-                    "updated_at": datetime.utcnow()
-                }
-            }
+            {"$set": update_fields}
         )
         
         if update_result.modified_count == 0:
@@ -777,37 +802,69 @@ async def submit_user_response(
         organizer = await db.users.find_one({"_id": activity["organizer_id"]})
         
         if organizer:
-            # Create in-app notification
-            await notification_service.create_notification(
-                db,
-                str(activity["organizer_id"]),
-                f"{current_user.name} responded '{response_data.response.value}' to {activity['title']}",
-                "activity_response",
-                {
-                    "activity_id": activity_id,
-                    "activity_title": activity["title"],
-                    "responder_name": current_user.name,
-                    "response": response_data.response.value,
-                    "availability_note": response_data.availability_note,
-                    "venue_suggestion": response_data.venue_suggestion
-                }
-            )
-            
-            # Send email notification to organizer
-            await notification_service.send_activity_response_notification_email(
-                to_email=organizer["email"],
-                to_name=organizer["name"],
-                responder_name=current_user.name,
-                activity_title=activity["title"],
-                response=response_data.response.value,
-                availability_note=response_data.availability_note,
-                venue_suggestion=response_data.venue_suggestion
-            )
+            if is_response_change:
+                # Send response change notification
+                await notification_service.create_notification(
+                    db,
+                    str(activity["organizer_id"]),
+                    f"{current_user.name} changed their response from '{current_response}' to '{response_data.response.value}' for {activity['title']}",
+                    "activity_response_changed",
+                    {
+                        "activity_id": activity_id,
+                        "activity_title": activity["title"],
+                        "responder_name": current_user.name,
+                        "previous_response": current_response,
+                        "new_response": response_data.response.value,
+                        "availability_note": response_data.availability_note,
+                        "venue_suggestion": response_data.venue_suggestion
+                    }
+                )
+                
+                # Send response change email notification
+                await notification_service.send_activity_response_changed_notification_email(
+                    to_email=organizer["email"],
+                    to_name=organizer["name"],
+                    responder_name=current_user.name,
+                    activity_title=activity["title"],
+                    previous_response=current_response,
+                    new_response=response_data.response.value,
+                    availability_note=response_data.availability_note,
+                    venue_suggestion=response_data.venue_suggestion
+                )
+            else:
+                # Send initial response notification
+                await notification_service.create_notification(
+                    db,
+                    str(activity["organizer_id"]),
+                    f"{current_user.name} responded '{response_data.response.value}' to {activity['title']}",
+                    "activity_response",
+                    {
+                        "activity_id": activity_id,
+                        "activity_title": activity["title"],
+                        "responder_name": current_user.name,
+                        "response": response_data.response.value,
+                        "availability_note": response_data.availability_note,
+                        "venue_suggestion": response_data.venue_suggestion
+                    }
+                )
+                
+                # Send email notification to organizer
+                await notification_service.send_activity_response_notification_email(
+                    to_email=organizer["email"],
+                    to_name=organizer["name"],
+                    responder_name=current_user.name,
+                    activity_title=activity["title"],
+                    response=response_data.response.value,
+                    availability_note=response_data.availability_note,
+                    venue_suggestion=response_data.venue_suggestion
+                )
         
         return {
-            "message": "Response submitted successfully",
+            "message": "Response updated successfully" if is_response_change else "Response submitted successfully",
             "response_recorded": response_data.response.value,
-            "activity_title": activity["title"]
+            "activity_title": activity["title"],
+            "is_change": is_response_change,
+            "previous_response": current_response if is_response_change else None
         }
         
     except HTTPException:
@@ -900,7 +957,7 @@ async def get_activity_summary(
                 deadline_passed = False
         
         return {
-            "activity": convert_activity_to_response(activity),
+            "activity": await convert_activity_to_response(activity, db),
             "summary": {
                 "total_invitees": total_invitees,
                 "responses": responses,
@@ -917,4 +974,305 @@ async def get_activity_summary(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get activity summary: {str(e)}"
+        )
+
+
+@router.post("/{activity_id}/recommendations", response_model=RecommendationResponse)
+async def generate_ai_recommendations(
+    activity_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Generate AI recommendations based on activity responses.
+    
+    Only the organizer can request recommendations. This analyzes confirmed
+    attendees' preferences and generates personalized venue/activity recommendations.
+    """
+    try:
+        # Get current user
+        current_user = await get_current_user(credentials, db)
+        
+        # Validate activity ID
+        if not ObjectId.is_valid(activity_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid activity ID"
+            )
+        
+        # Find activity
+        activity = await db.activities.find_one({"_id": ObjectId(activity_id)})
+        if not activity:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Activity not found"
+            )
+        
+        # Check if user is the organizer
+        if activity["organizer_id"] != ObjectId(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the organizer can request recommendations"
+            )
+        
+        # Analyze responses to get confirmed attendees
+        invitees = activity.get("invitees", [])
+        confirmed_attendees = [
+            invitee for invitee in invitees
+            if invitee.get("response") in ["yes", "maybe"]
+        ]
+        
+        if len(confirmed_attendees) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No confirmed attendees to generate recommendations for"
+            )
+        
+        # Collect preferences from confirmed attendees
+        preference_counts = {}
+        venue_suggestions = []
+        
+        for attendee in confirmed_attendees:
+            # Count preferences
+            prefs = attendee.get("preferences", {})
+            for pref, value in prefs.items():
+                if value:
+                    preference_counts[pref] = preference_counts.get(pref, 0) + 1
+            
+            # Collect venue suggestions
+            if attendee.get("venue_suggestion"):
+                venue_suggestions.append({
+                    "name": attendee.get("name"),
+                    "suggestion": attendee.get("venue_suggestion")
+                })
+        
+        # Get top preferences
+        top_preferences = sorted(preference_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+        
+        # Generate mock AI recommendations based on the data
+        # In a real implementation, this would call the LLM service
+        recommendations = []
+        
+        # Base recommendation data
+        base_recommendations = [
+            {
+                "name": "Café Central",
+                "description": "Perfect for intimate gatherings with confirmed attendees",
+                "category": "café",
+                "rating": 4.5,
+                "price_range": "€€"
+            },
+            {
+                "name": "Park Pavilion",
+                "description": "Great outdoor option with indoor backup",
+                "category": "outdoor",
+                "rating": 4.3,
+                "price_range": "€€€"
+            },
+            {
+                "name": "Local Brewery",
+                "description": "Casual atmosphere perfect for your group",
+                "category": "drinks",
+                "rating": 4.6,
+                "price_range": "€€"
+            }
+        ]
+        
+        # Create AI recommendations with personalized reasoning
+        for i, base_rec in enumerate(base_recommendations):
+            reasoning = f"Based on {len(confirmed_attendees)} confirmed attendees"
+            if top_preferences:
+                reasoning += f" and preference for {top_preferences[0][0]}"
+            if venue_suggestions:
+                reasoning += f". Considers venue suggestions from {len(venue_suggestions)} attendees"
+            
+            recommendation = AIRecommendation(
+                id=str(ObjectId()),
+                name=base_rec["name"],
+                description=base_rec["description"],
+                reasoning=reasoning,
+                rating=base_rec["rating"],
+                price_range=base_rec["price_range"],
+                category=base_rec["category"],
+                venue_details={
+                    "confirmed_attendees": len(confirmed_attendees),
+                    "top_preferences": [pref[0] for pref in top_preferences[:2]],
+                    "venue_suggestions_count": len(venue_suggestions)
+                }
+            )
+            recommendations.append(recommendation)
+        
+        # Update activity with recommendations and new status
+        recommendations_data = [rec.model_dump() for rec in recommendations]
+        await db.activities.update_one(
+            {"_id": ObjectId(activity_id)},
+            {
+                "$set": {
+                    "ai_recommendations": recommendations_data,
+                    "status": ActivityStatus.RECOMMENDATIONS_GENERATED,
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        return RecommendationResponse(
+            success=True,
+            recommendations=recommendations,
+            activity_id=activity_id,
+            confirmed_attendees=len(confirmed_attendees),
+            metadata={
+                "top_preferences": dict(top_preferences),
+                "venue_suggestions": venue_suggestions,
+                "generated_at": datetime.utcnow().isoformat()
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate recommendations: {str(e)}"
+        )
+
+
+@router.post("/{activity_id}/finalize")
+async def finalize_activity(
+    activity_id: str,
+    finalize_request: FinalizeActivityRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Finalize activity with selected recommendation and send final invites.
+    
+    Only the organizer can finalize the activity. This selects a recommendation
+    and sends final details to all confirmed attendees.
+    """
+    try:
+        # Get current user
+        current_user = await get_current_user(credentials, db)
+        
+        # Validate activity ID
+        if not ObjectId.is_valid(activity_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid activity ID"
+            )
+        
+        # Find activity
+        activity = await db.activities.find_one({"_id": ObjectId(activity_id)})
+        if not activity:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Activity not found"
+            )
+        
+        # Check if user is the organizer
+        if activity["organizer_id"] != ObjectId(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the organizer can finalize this activity"
+            )
+        
+        # Find the selected recommendation
+        ai_recommendations = activity.get("ai_recommendations", [])
+        selected_recommendation = None
+        
+        for rec in ai_recommendations:
+            if rec.get("id") == finalize_request.recommendation_id:
+                selected_recommendation = rec
+                break
+        
+        if not selected_recommendation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Selected recommendation not found"
+            )
+        
+        # Get confirmed attendees
+        invitees = activity.get("invitees", [])
+        confirmed_attendees = [
+            invitee for invitee in invitees
+            if invitee.get("response") in ["yes", "maybe"]
+        ]
+        
+        # Update activity with final selection
+        await db.activities.update_one(
+            {"_id": ObjectId(activity_id)},
+            {
+                "$set": {
+                    "selected_recommendation": selected_recommendation,
+                    "status": ActivityStatus.FINALIZED,
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        # Send final invitations to confirmed attendees
+        notification_service = NotificationService()
+        email_results = []
+        
+        for attendee in confirmed_attendees:
+            attendee_email = attendee.get("email")
+            attendee_name = attendee.get("name")
+            
+            if not attendee_email or not attendee_name:
+                continue
+            
+            # Send final invitation email
+            email_sent = await notification_service.send_activity_finalization_email(
+                to_email=attendee_email,
+                to_name=attendee_name,
+                organizer_name=current_user.name,
+                activity_title=activity["title"],
+                activity_description=activity.get("description", ""),
+                selected_venue=selected_recommendation,
+                final_message=finalize_request.final_message,
+                activity_details={
+                    "selected_date": activity.get("selected_date"),
+                    "selected_days": activity.get("selected_days", []),
+                    "timeframe": activity.get("timeframe")
+                }
+            )
+            
+            email_results.append({
+                "email": attendee_email,
+                "name": attendee_name,
+                "email_sent": email_sent
+            })
+            
+            # Create in-app notification if the attendee is a registered user
+            existing_user = await db.users.find_one({"email": attendee_email})
+            if existing_user:
+                await notification_service.create_notification(
+                    db,
+                    str(existing_user["_id"]),
+                    f"Activity finalized: {activity['title']} at {selected_recommendation['name']}",
+                    "activity_finalized",
+                    {
+                        "activity_id": activity_id,
+                        "activity_title": activity["title"],
+                        "venue_name": selected_recommendation["name"],
+                        "organizer_name": current_user.name
+                    }
+                )
+        
+        successful_emails = sum(1 for result in email_results if result["email_sent"])
+        
+        return {
+            "message": "Activity finalized and invitations sent",
+            "activity_id": activity_id,
+            "selected_venue": selected_recommendation["name"],
+            "confirmed_attendees": len(confirmed_attendees),
+            "emails_sent": successful_emails,
+            "email_results": email_results
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to finalize activity: {str(e)}"
         )

@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, User, MapPin, Heart, Settings, Users, UserPlus, UserCheck, Mail, MessageSquare, Edit3, Trash2, Check, X, Loader2, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, User, MapPin, Heart, Settings, Users, UserPlus, UserCheck, Mail, MessageSquare, Edit3, Trash2, Check, X, Loader2, AlertTriangle, Calendar, Link, Unlink } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService, Contact, ContactListResponse } from '@/services/api';
@@ -48,6 +48,15 @@ const Account = () => {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+
+  // Google Calendar integration state
+  const [calendarStatus, setCalendarStatus] = useState<{
+    integrated: boolean;
+    has_credentials: boolean;
+  } | null>(null);
+  const [isLoadingCalendarStatus, setIsLoadingCalendarStatus] = useState(false);
+  const [isConnectingCalendar, setIsConnectingCalendar] = useState(false);
+  const [isDisconnectingCalendar, setIsDisconnectingCalendar] = useState(false);
 
   // Form states for contacts
   const [contactEmail, setContactEmail] = useState('');
@@ -122,6 +131,7 @@ const Account = () => {
     loadContacts();
     loadContactRequests();
     loadPendingInvitations();
+    loadCalendarStatus();
   }, [navigate, isAuthenticated, authUser, authLoading, isProfileLoading]);
 
   const loadContacts = async () => {
@@ -153,6 +163,78 @@ const Account = () => {
       showError('Network error occurred');
     } finally {
       setIsLoadingRequests(false);
+    }
+  };
+
+  const loadCalendarStatus = async () => {
+    try {
+      setIsLoadingCalendarStatus(true);
+      const response = await apiService.getCalendarIntegrationStatus();
+      if (response.data) {
+        setCalendarStatus(response.data);
+      } else {
+        showError(response.error || 'Failed to load calendar status');
+      }
+    } catch (error) {
+      showError('Network error occurred while loading calendar status');
+    } finally {
+      setIsLoadingCalendarStatus(false);
+    }
+  };
+
+  const handleConnectCalendar = async () => {
+    try {
+      setIsConnectingCalendar(true);
+      const response = await apiService.initiateGoogleCalendarAuth();
+      if (response.data && response.data.authorization_url) {
+        // Open OAuth flow in a new window
+        window.open(response.data.authorization_url, '_blank', 'width=500,height=600');
+        showSuccess('Please complete the authorization in the new window');
+        
+        // Poll for status changes (simple approach)
+        const pollInterval = setInterval(async () => {
+          const statusResponse = await apiService.getCalendarIntegrationStatus();
+          if (statusResponse.data && statusResponse.data.integrated) {
+            clearInterval(pollInterval);
+            setCalendarStatus(statusResponse.data);
+            showSuccess('Google Calendar connected successfully!');
+            setIsConnectingCalendar(false);
+          }
+        }, 2000);
+
+        // Stop polling after 2 minutes
+        setTimeout(() => {
+          clearInterval(pollInterval);
+          setIsConnectingCalendar(false);
+        }, 120000);
+      } else {
+        showError(response.error || 'Failed to initiate Google Calendar connection');
+        setIsConnectingCalendar(false);
+      }
+    } catch (error) {
+      showError('Network error occurred while connecting calendar');
+      setIsConnectingCalendar(false);
+    }
+  };
+
+  const handleDisconnectCalendar = async () => {
+    if (!confirm('Are you sure you want to disconnect your Google Calendar? This will remove access to your calendar data.')) {
+      return;
+    }
+
+    try {
+      setIsDisconnectingCalendar(true);
+      const response = await apiService.disconnectGoogleCalendar();
+      if (response.data) {
+        setCalendarStatus({ integrated: false, has_credentials: false });
+        showSuccess('Google Calendar disconnected successfully');
+      } else {
+        showError(response.error || 'Failed to disconnect Google Calendar');
+      }
+    } catch (error) {
+      showError('Network error occurred while disconnecting calendar');
+    } finally {
+      setIsDisconnectingCalendar(false);
     }
   };
 
@@ -577,6 +659,123 @@ const Account = () => {
                 </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Google Calendar Integration */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="w-5 h-5" />
+              Google Calendar Integration
+            </CardTitle>
+            <CardDescription>
+              Connect your Google Calendar to help with scheduling activities
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoadingCalendarStatus ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin mr-2" />
+                <span className="text-gray-600">Loading calendar status...</span>
+              </div>
+            ) : calendarStatus ? (
+              <div className="space-y-4">
+                {/* Status Display */}
+                <div className="flex items-center justify-between p-4 border rounded-lg bg-gray-50">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-3 h-3 rounded-full ${
+                      calendarStatus.integrated ? 'bg-green-500' : 'bg-gray-400'
+                    }`} />
+                    <div>
+                      <p className="font-medium">
+                        {calendarStatus.integrated ? 'Connected' : 'Not Connected'}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        {calendarStatus.integrated
+                          ? 'Your Google Calendar is connected and ready to use'
+                          : 'Connect your Google Calendar to enable scheduling features'
+                        }
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {calendarStatus.integrated ? (
+                      <Button
+                        onClick={handleDisconnectCalendar}
+                        disabled={isDisconnectingCalendar}
+                        variant="outline"
+                        className="border-red-300 text-red-600 hover:bg-red-50"
+                      >
+                        {isDisconnectingCalendar ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Disconnecting...
+                          </>
+                        ) : (
+                          <>
+                            <Unlink className="w-4 h-4 mr-2" />
+                            Disconnect
+                          </>
+                        )}
+                      </Button>
+                    ) : (
+                      <Button
+                        onClick={handleConnectCalendar}
+                        disabled={isConnectingCalendar}
+                        style={{ backgroundColor: '#1155cc', color: 'white' }}
+                      >
+                        {isConnectingCalendar ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Connecting...
+                          </>
+                        ) : (
+                          <>
+                            <Link className="w-4 h-4 mr-2" />
+                            Connect Google Calendar
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Benefits/Features */}
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h4 className="font-medium text-blue-900 mb-2">Calendar Integration Benefits:</h4>
+                  <ul className="text-sm text-blue-800 space-y-1">
+                    <li>• Check availability when planning activities</li>
+                    <li>• Avoid scheduling conflicts with existing events</li>
+                    <li>• Get smart scheduling suggestions based on your calendar</li>
+                    <li>• Automatically sync confirmed activities to your calendar</li>
+                  </ul>
+                </div>
+
+                {calendarStatus.integrated && (
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-green-800">
+                      <Check className="w-4 h-4" />
+                      <span className="font-medium">Calendar Connected Successfully</span>
+                    </div>
+                    <p className="text-sm text-green-700 mt-1">
+                      Your calendar integration is active and working properly.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-500 mb-4">Unable to load calendar status</p>
+                <Button
+                  onClick={loadCalendarStatus}
+                  variant="outline"
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 

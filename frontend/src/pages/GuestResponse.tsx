@@ -6,10 +6,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { Calendar as CalendarComponent } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Calendar, Cloud, Users, Check, X, Clock, Download, Heart, MapPin, Loader2 } from 'lucide-react';
+import { Calendar, Cloud, Users, Check, X, Clock, Download, Heart, MapPin, Loader2, CalendarIcon } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { apiService } from '@/services/api';
+import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
 
 const GuestResponse = () => {
   const navigate = useNavigate();
@@ -17,10 +21,14 @@ const GuestResponse = () => {
   const [activity, setActivity] = useState<any>(null);
   const [response, setResponse] = useState('');
   const [availabilityNote, setAvailabilityNote] = useState('');
+  const [availabilityDate, setAvailabilityDate] = useState<Date | undefined>(undefined);
+  const [availabilityTime, setAvailabilityTime] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [guestEmail, setGuestEmail] = useState('');
+  const [isResponseChange, setIsResponseChange] = useState(false);
+  const [existingResponse, setExistingResponse] = useState<any>(null);
   const [preferences, setPreferences] = useState({
     indoor: false,
     outdoor: false,
@@ -53,6 +61,43 @@ const GuestResponse = () => {
         
         if (response.data) {
           setActivity(response.data);
+          
+          // Check if guest already has a response and pre-fill form
+          if (email && response.data) {
+            // We need to get the full activity data to check for existing responses
+            // For now, we'll simulate checking if this is a response change
+            // In a real implementation, we might need an additional API call
+            // or include invitee data in the public activity response
+            
+            // For guest responses, we can check if there's existing data in URL params
+            const existingResponseParam = searchParams.get('existing_response');
+            const existingNoteParam = searchParams.get('existing_note');
+            const existingVenueParam = searchParams.get('existing_venue');
+            
+            if (existingResponseParam) {
+              setIsResponseChange(true);
+              setResponse(existingResponseParam);
+              setAvailabilityNote(existingNoteParam || '');
+              setVenueSuggestion(existingVenueParam || '');
+              
+              // Try to parse preferences if they exist
+              const existingPrefsParam = searchParams.get('existing_prefs');
+              if (existingPrefsParam) {
+                try {
+                  const prefs = JSON.parse(decodeURIComponent(existingPrefsParam));
+                  setPreferences(prefs);
+                } catch (e) {
+                  console.warn('Could not parse existing preferences');
+                }
+              }
+              
+              setExistingResponse({
+                response: existingResponseParam,
+                availability_note: existingNoteParam,
+                venue_suggestion: existingVenueParam
+              });
+            }
+          }
         } else {
           showError(response.error || 'Activity not found');
           navigate('/');
@@ -88,10 +133,18 @@ const GuestResponse = () => {
     try {
       setIsSubmitting(true);
       
+      // Format availability data - guests only use date/time pickers
+      let formattedAvailability = '';
+      if (availabilityDate || availabilityTime) {
+        const datePart = availabilityDate ? format(availabilityDate, 'PPP') : '';
+        const timePart = availabilityTime ? `at ${availabilityTime}` : '';
+        formattedAvailability = [datePart, timePart].filter(Boolean).join(' ');
+      }
+      
       const responseData = {
         guest_id: guestEmail,
         response: response as 'yes' | 'maybe' | 'no',
-        availability_note: availabilityNote,
+        availability_note: formattedAvailability,
         preferences,
         venue_suggestion: venueSuggestion
       };
@@ -100,7 +153,11 @@ const GuestResponse = () => {
       
       if (result.data) {
         setSubmitted(true);
-        showSuccess('Response submitted successfully!');
+        if (isResponseChange) {
+          showSuccess('Response updated successfully!');
+        } else {
+          showSuccess('Response submitted successfully!');
+        }
       } else {
         showError(result.error || 'Failed to submit response');
       }
@@ -167,17 +224,28 @@ END:VCALENDAR`;
             <div className="mx-auto w-16 h-16 rounded-full flex items-center justify-center mb-4" style={{ backgroundColor: '#1155cc' }}>
               <Check className="w-8 h-8 text-white" />
             </div>
-            <CardTitle>Response Submitted!</CardTitle>
+            <CardTitle>{isResponseChange ? 'Response Updated!' : 'Response Submitted!'}</CardTitle>
             <CardDescription>
-              Thanks for responding to {activity.organizer_name}'s invitation.
+              Thanks for {isResponseChange ? 'updating your response to' : 'responding to'} {activity.organizer_name || 'the organizer'}'s invitation.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="p-4 bg-gray-50 rounded-lg">
               <div className="font-medium">Your Response: <Badge>{response}</Badge></div>
-              {availabilityNote && (
+              {existingResponse?.response && isResponseChange && existingResponse.response !== response && (
+                <div className="text-sm text-gray-500 mt-1">
+                  Previously: {existingResponse.response}
+                </div>
+              )}
+              {(availabilityDate || availabilityTime) && (
                 <div className="text-sm text-gray-600 mt-2">
-                  Note: {availabilityNote}
+                  <div className="font-medium mb-1">Availability:</div>
+                  {availabilityDate && (
+                    <div>Date: {format(availabilityDate, "PPP")}</div>
+                  )}
+                  {availabilityTime && (
+                    <div>Time: {availabilityTime}</div>
+                  )}
                 </div>
               )}
               {venueSuggestion && (
@@ -219,7 +287,9 @@ END:VCALENDAR`;
           <h1 className="text-3xl font-bold mb-2">
             <span style={{ color: '#ff9900' }}>Sunnyside</span>
           </h1>
-          <p className="text-gray-600">You've been invited to an activity!</p>
+          <p className="text-gray-600">
+            {isResponseChange ? 'Update your response to this activity' : 'You\'ve been invited to an activity!'}
+          </p>
           {activity.deadline && (
             <div className="mt-2">
               <Badge variant="outline" className="text-orange-600 border-orange-300">
@@ -244,6 +314,24 @@ END:VCALENDAR`;
           <CardContent className="space-y-4">
             <p className="text-gray-700">{activity.description}</p>
             
+            {/* Activity Date */}
+            <div className="flex items-center gap-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <Calendar className="w-5 h-5 text-blue-600" />
+              <div>
+                <div className="font-medium text-blue-900">Activity Date</div>
+                <div className="text-blue-700">
+                  {activity.selected_date
+                    ? new Date(activity.selected_date).toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                      })
+                    : 'Flexible'
+                  }
+                </div>
+              </div>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-sm font-medium">
@@ -300,9 +388,12 @@ END:VCALENDAR`;
         {/* Response Options */}
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Your Response</CardTitle>
+            <CardTitle>{isResponseChange ? 'Update Your Response' : 'Your Response'}</CardTitle>
             <CardDescription>
-              Let {activity.organizer_name} know if you can join
+              {isResponseChange
+                ? `Change your previous response (${existingResponse?.response}) and let ${activity.organizer_name || 'the organizer'} know your updated availability`
+                : `Let ${activity.organizer_name || 'the organizer'} know if you can join`
+              }
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -349,11 +440,63 @@ END:VCALENDAR`;
                     required
                   />
                 </div>
-                <Textarea
-                  placeholder="Add a note about your availability (optional)"
-                  value={availabilityNote}
-                  onChange={(e) => setAvailabilityNote(e.target.value)}
-                />
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Available Date (Optional)</Label>
+                    <div className="flex gap-2">
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            className={cn(
+                              "flex-1 justify-start text-left font-normal",
+                              !availabilityDate && "text-muted-foreground"
+                            )}
+                          >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {availabilityDate ? format(availabilityDate, "PPP") : "Pick a date"}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <CalendarComponent
+                            mode="single"
+                            selected={availabilityDate}
+                            onSelect={setAvailabilityDate}
+                            disabled={(date) => date < new Date()}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
+                      {availabilityDate && (
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setAvailabilityDate(undefined)}
+                          className="shrink-0"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="availability-time">Available Time (Optional)</Label>
+                    <Input
+                      id="availability-time"
+                      type="time"
+                      value={availabilityTime}
+                      onChange={(e) => setAvailabilityTime(e.target.value)}
+                      placeholder="Select time"
+                    />
+                  </div>
+                  
+                  <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                    <p className="text-xs text-blue-700">
+                      💡 Use the date and time pickers above to specify when you're available. Create a free Sunnyside account to get personalized calendar integration!
+                    </p>
+                  </div>
+                </div>
               </div>
             )}
           </CardContent>
@@ -426,7 +569,7 @@ END:VCALENDAR`;
                     Submitting...
                   </>
                 ) : (
-                  'Submit Response'
+                  isResponseChange ? 'Update Response' : 'Submit Response'
                 )}
               </Button>
             </CardContent>

@@ -41,9 +41,19 @@ const ActivitySuggestions = () => {
     setError(null);
 
     try {
-      // Use the RecommendationGenerator's API call logic
+      // Use the RecommendationGenerator's API call logic with enhanced context
       const query = `${activityData.description} - looking for specific activity suggestions`;
-      const response = await apiService.getRecommendations(query, 5);
+      
+      // Build context options from activity data
+      const options = {
+        date: activityData.selected_date,
+        indoor_outdoor_preference: activityData.weatherPreference,
+        location: activityData.location || 'local',
+        group_size: activityData.groupSize ? parseInt(activityData.groupSize) : undefined,
+        weather_data: activityData.weather_data
+      };
+
+      const response = await apiService.getRecommendations(query, 5, options);
       
       if (response.data && response.data.success) {
         setSuggestions(response.data.recommendations);

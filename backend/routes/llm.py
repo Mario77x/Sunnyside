@@ -21,12 +21,27 @@ class RecommendationsRequest(BaseModel):
     """Request model for activity recommendations."""
     query: str = Field(..., description="User query for activity recommendations", min_length=1, max_length=500)
     max_results: int = Field(default=5, description="Maximum number of recommendations to return", ge=1, le=10)
+    weather_data: Optional[Dict[str, Any]] = Field(None, description="Optional weather information")
+    date: Optional[str] = Field(None, description="Optional date for the activity (YYYY-MM-DD format)")
+    indoor_outdoor_preference: Optional[str] = Field(None, description="Indoor/outdoor preference: 'indoor', 'outdoor', 'either'")
+    location: Optional[str] = Field(None, description="Optional location information")
+    group_size: Optional[int] = Field(None, description="Optional number of people in the group", ge=1, le=50)
     
     class Config:
         json_schema_extra = {
             "example": {
                 "query": "something fun to do outdoors",
-                "max_results": 5
+                "max_results": 5,
+                "weather_data": {
+                    "current": {
+                        "temperature": 22,
+                        "weather_description": "sunny"
+                    }
+                },
+                "date": "2024-01-20",
+                "indoor_outdoor_preference": "outdoor",
+                "location": "Amsterdam",
+                "group_size": 4
             }
         }
 
@@ -357,7 +372,12 @@ async def get_activity_recommendations(request: RecommendationsRequest) -> Recom
         # Get recommendations using the LLM service
         result = await llm_service.get_recommendations(
             query=request.query.strip(),
-            max_results=request.max_results
+            max_results=request.max_results,
+            weather_data=request.weather_data,
+            date=request.date,
+            indoor_outdoor_preference=request.indoor_outdoor_preference,
+            location=request.location,
+            group_size=request.group_size
         )
         
         # Return the result

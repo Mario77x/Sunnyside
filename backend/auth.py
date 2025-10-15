@@ -112,7 +112,9 @@ async def get_current_user(
         email=user["email"],
         location=user.get("location"),
         preferences=user.get("preferences", []),
-        role=user.get("role", "user")
+        role=user.get("role", "user"),
+        google_calendar_integrated=user.get("google_calendar_integrated", False),
+        google_calendar_credentials=user.get("google_calendar_credentials")
     )
 
 

@@ -26,6 +26,7 @@ class PublicActivityResponse(BaseModel):
     weather_preference: Optional[str] = None
     timeframe: Optional[str] = None
     group_size: Optional[str] = None
+    deadline: Optional[datetime] = None
     # Note: We don't expose sensitive information like organizer_id, invitees list, etc.
 
 

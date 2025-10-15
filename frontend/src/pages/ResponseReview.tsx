@@ -4,8 +4,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Users, CheckCircle, Clock, XCircle, Calendar, RefreshCw, ArrowRight, Heart, MapPin } from 'lucide-react';
-import { showSuccess } from '@/utils/toast';
+import { showSuccess, showError } from '@/utils/toast';
 import ThinkingScreen from '@/components/ThinkingScreen';
+import { apiService, AIRecommendation } from '@/services/api';
 
 const ResponseReview = () => {
   const navigate = useNavigate();
@@ -13,7 +14,8 @@ const ResponseReview = () => {
   const [activity, setActivity] = useState(null);
   const [isThinking, setIsThinking] = useState(false);
   const [showRecommendations, setShowRecommendations] = useState(false);
-  const [recommendations, setRecommendations] = useState([]);
+  const [recommendations, setRecommendations] = useState<AIRecommendation[]>([]);
+  const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
 
   useEffect(() => {
     if (location.state?.activity) {
@@ -73,7 +75,7 @@ const ResponseReview = () => {
     });
     
     return Object.entries(preferences)
-      .sort(([,a], [,b]) => b - a)
+      .sort(([,a], [,b]) => (b as number) - (a as number))
       .slice(0, 5);
   };
 
@@ -105,67 +107,74 @@ const ResponseReview = () => {
     navigate('/weather-planning', { state: { activity } });
   };
 
-  const handleProceedWithResponses = () => {
-    setIsThinking(true);
+  const handleProceedWithResponses = async () => {
+    if (!activity) return;
+    
+    try {
+      setIsThinking(true);
+      setIsLoadingRecommendations(true);
+
+      const result = await apiService.generateAIRecommendations(activity.id);
+      
+      if (result.error) {
+        showError(result.error);
+        setIsThinking(false);
+        return;
+      }
+
+      if (result.data) {
+        setRecommendations(result.data.recommendations);
+        setShowRecommendations(true);
+      }
+    } catch (error) {
+      showError('Failed to generate recommendations. Please try again.');
+      console.error('Error generating recommendations:', error);
+    } finally {
+      setIsThinking(false);
+      setIsLoadingRecommendations(false);
+    }
   };
 
   const handleThinkingComplete = () => {
-    setIsThinking(false);
-    
-    // Mock AI recommendations based on responses
-    const confirmedAttendees = getConfirmedAttendees();
-    const preferences = getCollectedPreferences();
-    
-    const mockRecommendations = [
-      {
-        id: 1,
-        name: "Café Central",
-        description: "Perfect for intimate gatherings with confirmed attendees",
-        reasoning: `Based on ${confirmedAttendees.length} confirmed attendees and preference for ${preferences[0]?.[0] || 'social activities'}`,
-        rating: 4.5,
-        priceRange: "€€",
-        category: "café"
-      },
-      {
-        id: 2,
-        name: "Park Pavilion",
-        description: "Great outdoor option with indoor backup",
-        reasoning: `Weather-suitable option for your group size of ${confirmedAttendees.length} people`,
-        rating: 4.3,
-        priceRange: "€€€",
-        category: "outdoor"
-      },
-      {
-        id: 3,
-        name: "Local Brewery",
-        description: "Casual atmosphere perfect for your group",
-        reasoning: `Popular choice based on similar group preferences in your area`,
-        rating: 4.6,
-        priceRange: "€€",
-        category: "drinks"
-      }
-    ];
-    
-    setRecommendations(mockRecommendations);
-    setShowRecommendations(true);
+    // This is now handled in handleProceedWithResponses
   };
 
-  const handleSelectRecommendation = (recommendation) => {
-    const updatedActivity = {
-      ...activity,
-      selectedVenue: recommendation,
-      confirmedAttendees: getConfirmedAttendees(),
-      status: 'venue-selected-post-deadline'
-    };
-    
-    const activities = JSON.parse(localStorage.getItem('sunnyside_activities') || '[]');
-    const updatedActivities = activities.map(act => 
-      act.id === activity.id ? updatedActivity : act
-    );
-    localStorage.setItem('sunnyside_activities', JSON.stringify(updatedActivities));
-    
-    showSuccess('Venue selected! Activity is now confirmed.');
-    navigate('/activity-summary', { state: { activity: updatedActivity } });
+  const handleSelectRecommendation = async (recommendation: AIRecommendation) => {
+    if (!activity) return;
+
+    try {
+      setIsLoadingRecommendations(true);
+
+      const finalizeData = {
+        recommendation_id: recommendation.id,
+        final_message: "Looking forward to seeing everyone there!"
+      };
+
+      const result = await apiService.finalizeActivity(activity.id, finalizeData);
+      
+      if (result.error) {
+        showError(result.error);
+        return;
+      }
+
+      showSuccess('Activity finalized! Final invitations have been sent.');
+      
+      // Navigate to activity summary
+      navigate('/activity-summary', {
+        state: {
+          activity: {
+            ...activity,
+            selectedVenue: recommendation,
+            status: 'finalized'
+          }
+        }
+      });
+    } catch (error) {
+      showError('Failed to finalize activity. Please try again.');
+      console.error('Error finalizing activity:', error);
+    } finally {
+      setIsLoadingRecommendations(false);
+    }
   };
 
   if (isThinking) {
@@ -236,7 +245,7 @@ const ResponseReview = () => {
                         <span className="text-sm">★ {recommendation.rating}</span>
                       </div>
                       <Badge variant="outline" className="text-xs">
-                        {recommendation.priceRange}
+                        {recommendation.price_range}
                       </Badge>
                     </div>
                   </div>
@@ -361,7 +370,7 @@ const ResponseReview = () => {
               <div className="flex flex-wrap gap-2">
                 {topPreferences.map(([pref, count]) => (
                   <Badge key={pref} variant="outline" className="px-3 py-1">
-                    {pref.charAt(0).toUpperCase() + pref.slice(1)} ({count})
+                    {pref.charAt(0).toUpperCase() + pref.slice(1)} ({count as number})
                   </Badge>
                 ))}
               </div>

@@ -51,7 +51,7 @@ app = FastAPI(
 )
 
 # Configure CORS
-cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -94,6 +94,8 @@ from .routes.llm import router as llm_router
 from .routes.notifications import router as notifications_router
 from .routes.contacts import router as contacts_router
 from .routes.users import router as users_router
+from .routes.deadlines import router as deadlines_router
+from .routes.calendar import router as calendar_router
 
 api_v1_router = APIRouter(prefix="/api/v1")
 
@@ -114,6 +116,8 @@ api_v1_router.include_router(llm_router)
 api_v1_router.include_router(notifications_router)
 api_v1_router.include_router(contacts_router)
 api_v1_router.include_router(users_router)
+api_v1_router.include_router(deadlines_router)
+api_v1_router.include_router(calendar_router)
 app.include_router(api_v1_router)
 
 

@@ -6,8 +6,9 @@ import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Cloud, Sun, CloudRain, Calendar as CalendarIcon, ThumbsUp, AlertTriangle, Info, Users, Loader2, CloudSnow, Zap, Eye, CloudDrizzle } from 'lucide-react';
-import { format } from 'date-fns';
+import { ArrowLeft, Cloud, Sun, CloudRain, Calendar as CalendarIcon, ThumbsUp, AlertTriangle, Info, Users, Loader2, CloudSnow, Zap, Eye, CloudDrizzle, Clock } from 'lucide-react';
+import { format, addHours, addDays } from 'date-fns';
+import { calculateDeadline, getDeadlineText, getDeadlineStatus } from '@/utils/deadlineCalculator';
 import { showError, showSuccess } from '@/utils/toast';
 import ThinkingScreen from '@/components/ThinkingScreen';
 import { apiService } from '@/services/api';
@@ -25,6 +26,10 @@ const WeatherPlanning = () => {
   const [groupSize, setGroupSize] = useState('');
   const [isLoadingWeather, setIsLoadingWeather] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deadline, setDeadline] = useState(null);
+  const [useCustomDeadline, setUseCustomDeadline] = useState(false);
+  const [calendarAvailability, setCalendarAvailability] = useState(null);
+  const [isLoadingCalendar, setIsLoadingCalendar] = useState(false);
 
   useEffect(() => {
     if (location.state?.activity) {
@@ -79,6 +84,41 @@ const WeatherPlanning = () => {
       setIsLoadingWeather(false);
     }
   };
+
+  const loadCalendarAvailability = async () => {
+    if (!selectedDate) return;
+    
+    setIsLoadingCalendar(true);
+    try {
+      const startDate = new Date(selectedDate);
+      const endDate = new Date(selectedDate);
+      endDate.setDate(endDate.getDate() + 7); // Check 7 days from selected date
+      
+      const result = await apiService.getCalendarAvailability(
+        startDate.toISOString(),
+        endDate.toISOString()
+      );
+      
+      if (result.data) {
+        setCalendarAvailability(result.data);
+      } else if (result.error) {
+        console.warn('Calendar availability error:', result.error);
+        // Don't show error to user, just fail silently for calendar features
+      }
+    } catch (error) {
+      console.error('Error loading calendar availability:', error);
+      // Calendar integration is optional, so we don't show errors to users
+    } finally {
+      setIsLoadingCalendar(false);
+    }
+  };
+
+  // Load calendar availability when date is selected
+  useEffect(() => {
+    if (selectedDate) {
+      loadCalendarAvailability();
+    }
+  }, [selectedDate]);
 
   const getConditionFromWeatherCode = (code) => {
     if (code === 0) return 'sunny';
@@ -220,6 +260,72 @@ const WeatherPlanning = () => {
     setSelectedDays([]);
   };
 
+  const renderCalendarAvailability = () => {
+    if (!calendarAvailability || !calendarAvailability.integrated) {
+      return null;
+    }
+
+    if (isLoadingCalendar) {
+      return (
+        <Card className="border-blue-200 bg-blue-50">
+          <CardContent className="pt-4">
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+              <span className="text-sm text-blue-800">Loading your calendar availability...</span>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    const { availability } = calendarAvailability;
+    if (!availability) return null;
+
+    return (
+      <Card className="border-green-200 bg-green-50">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-green-800">
+            <CalendarIcon className="w-5 h-5" />
+            Your Calendar Availability
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {availability.suggestions.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="font-medium text-green-900">Suggested times:</h4>
+              <ul className="space-y-1">
+                {availability.suggestions.map((suggestion, index) => (
+                  <li key={index} className="text-sm text-green-700 flex items-center gap-2">
+                    <ThumbsUp className="w-3 h-3" />
+                    {suggestion}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          
+          {availability.busy_slots.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <h4 className="font-medium text-green-900">Busy times to avoid:</h4>
+              <ul className="space-y-1">
+                {availability.busy_slots.slice(0, 3).map((slot, index) => (
+                  <li key={index} className="text-sm text-green-700">
+                    {new Date(slot.start).toLocaleDateString()} {new Date(slot.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {new Date(slot.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}: {slot.title}
+                  </li>
+                ))}
+                {availability.busy_slots.length > 3 && (
+                  <li className="text-xs text-green-600">
+                    +{availability.busy_slots.length - 3} more events
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
   const getWeatherReminder = () => {
     if (!selectedDate) return null;
 
@@ -266,9 +372,29 @@ const WeatherPlanning = () => {
     return null;
   };
 
+  const calculateAutoDeadline = () => {
+    if (!selectedDate) return null;
+    return calculateDeadline({ activityDate: selectedDate });
+  };
+
+  const getDeadlineInfo = () => {
+    const autoDeadline = calculateAutoDeadline();
+    const finalDeadline = useCustomDeadline ? deadline : autoDeadline;
+    
+    if (!finalDeadline) return null;
+    
+    return {
+      deadline: finalDeadline,
+      text: getDeadlineText(finalDeadline),
+      status: getDeadlineStatus(finalDeadline)
+    };
+  };
+
   const handleContinue = async () => {
     // Date selection is now optional - users can proceed without selecting a date for flexibility
     setIsSubmitting(true);
+    
+    const finalDeadline = useCustomDeadline ? deadline : calculateAutoDeadline();
     
     const updatedActivity = {
       ...activity,
@@ -277,6 +403,7 @@ const WeatherPlanning = () => {
       group_size: groupSize,
       selected_days: selectedDays.length > 0 ? selectedDays : [activity.timeframe],
       weather_data: weatherData,
+      deadline: finalDeadline?.toISOString(),
       status: 'weather-planned'
     };
     
@@ -439,6 +566,86 @@ const WeatherPlanning = () => {
                   placeholder="e.g., 4-6 people, small group, family"
                 />
               </div>
+
+              {/* Deadline Section */}
+              {selectedDate && (
+                <div className="space-y-3">
+                  <label className="text-sm font-medium flex items-center gap-2">
+                    <Clock className="w-4 h-4" />
+                    Response Deadline
+                  </label>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="radio"
+                        id="auto-deadline"
+                        name="deadline-type"
+                        checked={!useCustomDeadline}
+                        onChange={() => setUseCustomDeadline(false)}
+                        className="w-4 h-4 text-blue-600"
+                      />
+                      <label htmlFor="auto-deadline" className="text-sm">
+                        Automatic deadline (recommended)
+                      </label>
+                    </div>
+                    
+                    {!useCustomDeadline && calculateAutoDeadline() && (
+                      <div className="ml-7 p-3 bg-blue-50 rounded-lg">
+                        <div className="text-sm text-blue-800">
+                          <strong>Deadline:</strong> {format(calculateAutoDeadline(), 'PPP p')}
+                        </div>
+                        <div className="text-xs text-blue-600 mt-1">
+                          {getDeadlineText(calculateAutoDeadline())} to respond
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="radio"
+                        id="custom-deadline"
+                        name="deadline-type"
+                        checked={useCustomDeadline}
+                        onChange={() => setUseCustomDeadline(true)}
+                        className="w-4 h-4 text-blue-600"
+                      />
+                      <label htmlFor="custom-deadline" className="text-sm">
+                        Set custom deadline
+                      </label>
+                    </div>
+
+                    {useCustomDeadline && (
+                      <div className="ml-7">
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className={`justify-start text-left font-normal ${!deadline && 'text-muted-foreground'}`}
+                            >
+                              <Clock className="mr-2 h-4 w-4" />
+                              {deadline ? format(deadline, 'PPP p') : 'Set deadline'}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={deadline}
+                              onSelect={setDeadline}
+                              disabled={(date) => date < new Date() || (selectedDate && date >= selectedDate)}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                        {deadline && (
+                          <div className="mt-2 p-2 bg-yellow-50 rounded text-xs text-yellow-800">
+                            <strong>Note:</strong> {getDeadlineText(deadline)} for invitees to respond
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -463,6 +670,9 @@ const WeatherPlanning = () => {
               </CardContent>
             </Card>
           )}
+
+          {/* Calendar Availability */}
+          {selectedDate && renderCalendarAvailability()}
 
           {/* Weather Forecast */}
           <Card>
