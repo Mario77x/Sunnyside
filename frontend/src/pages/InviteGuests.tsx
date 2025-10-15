@@ -19,6 +19,7 @@ const InviteGuests = () => {
   const [newInvitee, setNewInvitee] = useState({ name: '', email: '', phone: '' });
   const [customMessage, setCustomMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [guestExperienceLink, setGuestExperienceLink] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -80,10 +81,34 @@ const InviteGuests = () => {
       if (response.data) {
         showSuccess(`Invitations sent to ${response.data.invited_count} people!`);
         
+        // Store the guest experience link if provided
+        if (response.data.guest_experience_link) {
+          // Correct the domain to use current window origin
+          const backendLink = response.data.guest_experience_link;
+          try {
+            const url = new URL(backendLink);
+            const correctedLink = `${window.location.origin}${url.pathname}${url.search}`;
+            console.log('🔍 [InviteGuests] Backend link:', backendLink);
+            console.log('🔍 [InviteGuests] Corrected link:', correctedLink);
+            setGuestExperienceLink(correctedLink);
+            // Store corrected link in sessionStorage with activity ID as key
+            sessionStorage.setItem(`guestExperienceLink_${activity.id}`, correctedLink);
+          } catch (error) {
+            console.log('🔍 [InviteGuests] Error parsing backend link, using as-is:', backendLink);
+            setGuestExperienceLink(backendLink);
+            sessionStorage.setItem(`guestExperienceLink_${activity.id}`, backendLink);
+          }
+        }
+        
         // Fetch updated activity
         const updatedActivityResponse = await apiService.getActivity(activity.id);
         if (updatedActivityResponse.data) {
-          navigate('/activity-summary', { state: { activity: updatedActivityResponse.data } });
+          navigate('/activity-summary', {
+            state: {
+              activity: updatedActivityResponse.data,
+              guestExperienceLink: response.data.guest_experience_link
+            }
+          });
         } else {
           navigate('/');
         }
@@ -109,6 +134,12 @@ const InviteGuests = () => {
       }
     }
     navigate('/');
+  };
+
+  const handleTestGuestExperience = () => {
+    if (guestExperienceLink) {
+      window.open(guestExperienceLink, '_blank');
+    }
   };
 
   if (!activity) return null;
@@ -453,6 +484,16 @@ const InviteGuests = () => {
 
         {/* Send Invitations */}
         <div className="space-y-3">
+          {guestExperienceLink && user?.role === 'admin' && (
+            <Button
+              onClick={handleTestGuestExperience}
+              variant="outline"
+              className="w-full"
+              style={{ borderColor: '#1155cc', color: '#1155cc' }}
+            >
+              Test Guest Experience
+            </Button>
+          )}
           <div className="flex gap-3">
             <Button
               variant="outline"

@@ -7,17 +7,19 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Calendar, Cloud, Users, Check, X, Clock, Download, Heart, MapPin, Bell, CalendarCheck } from 'lucide-react';
-import { showSuccess } from '@/utils/toast';
+import { ArrowLeft, Calendar, Cloud, Users, Check, X, Clock, Download, Heart, MapPin, Bell, CalendarCheck, Loader2 } from 'lucide-react';
+import { showSuccess, showError } from '@/utils/toast';
+import { useAuth } from '@/contexts/AuthContext';
 
 const InviteeResponse = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [user, setUser] = useState(null);
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const [activity, setActivity] = useState(null);
   const [response, setResponse] = useState('');
   const [availabilityNote, setAvailabilityNote] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [preferences, setPreferences] = useState({
     indoor: false,
     outdoor: false,
@@ -33,18 +35,20 @@ const InviteeResponse = () => {
   const [showCustomNote, setShowCustomNote] = useState(false);
 
   useEffect(() => {
-    const userData = localStorage.getItem('sunnyside_user');
-    if (userData) {
-      const parsedUser = JSON.parse(userData);
-      setUser(parsedUser);
-      
-      // Pre-fill preferences from user profile
-      if (parsedUser.preferences) {
-        setPreferences(parsedUser.preferences);
-      }
-    } else {
-      navigate('/onboarding');
+    // Wait for auth to load
+    if (authLoading) {
       return;
+    }
+
+    // Check authentication status
+    if (!isAuthenticated) {
+      navigate('/login');
+      return;
+    }
+
+    // Pre-fill preferences from user profile
+    if (user?.preferences) {
+      setPreferences(user.preferences);
     }
 
     if (location.state?.activity) {
@@ -55,13 +59,12 @@ const InviteeResponse = () => {
       generateCalendarSuggestions(activityData);
       
       // Check if user already responded
-      if (activityData && activityData.responses && userData) {
-        const parsedUser = JSON.parse(userData);
-        const existingResponse = activityData.responses.find(r => r.userId === parsedUser.id);
+      if (activityData && activityData.responses && user) {
+        const existingResponse = activityData.responses.find(r => r.userId === user.id);
         if (existingResponse) {
           setResponse(existingResponse.response);
           setAvailabilityNote(existingResponse.availabilityNote || '');
-          setPreferences(existingResponse.preferences || parsedUser.preferences || preferences);
+          setPreferences(existingResponse.preferences || user.preferences || preferences);
           setVenueSuggestion(existingResponse.venueSuggestion || '');
           setSubmitted(true);
         }
@@ -69,7 +72,9 @@ const InviteeResponse = () => {
     } else {
       navigate('/');
     }
-  }, [location, navigate]);
+    
+    setIsLoading(false);
+  }, [location, navigate, authLoading, isAuthenticated, user]);
 
   const generateCalendarSuggestions = (activityData) => {
     // Mock calendar integration - suggest optimal days
@@ -139,34 +144,12 @@ const InviteeResponse = () => {
     showSuccess('Response submitted successfully!');
   };
 
-  const downloadCalendarEvent = () => {
-    if (!activity) return;
-
-    const calendarData = `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Sunnyside//EN
-BEGIN:VEVENT
-SUMMARY:${activity.title}
-DESCRIPTION:${activity.description}
-DTSTART:20241201T180000Z
-DTEND:20241201T210000Z
-END:VEVENT
-END:VCALENDAR`;
-
-    const blob = new Blob([calendarData], { type: 'text/calendar' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${activity.title.replace(/\s+/g, '_')}.ics`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
 
   const getDeadlineText = () => {
     if (!activity || !activity.deadline) return '';
     const deadline = new Date(activity.deadline);
     const now = new Date();
-    const hoursLeft = Math.ceil((deadline - now) / (1000 * 60 * 60));
+    const hoursLeft = Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60));
     
     if (hoursLeft <= 0) return 'Deadline passed';
     if (hoursLeft === 1) return '1 hour left';
@@ -175,27 +158,13 @@ END:VCALENDAR`;
     return `${daysLeft} day${daysLeft > 1 ? 's' : ''} left`;
   };
 
-  const getSelectedDaysDisplay = () => {
-    if (activity.selectedDate) {
-      return new Date(activity.selectedDate).toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
-      });
-    } else if (activity.selectedDays && activity.selectedDays.length > 0) {
-      return activity.selectedDays.join(', ');
-    } else if (activity.timeframe && activity.timeframe !== 'flexible') {
-      return activity.timeframe;
-    }
-    return 'Flexible dates';
-  };
 
-  // Show loading or redirect if no activity or user
-  if (!activity || !user) {
+  // Show loading while auth or activity is loading
+  if (authLoading || isLoading || !activity || !user) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-orange-50 flex items-center justify-center">
         <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
           <p className="text-gray-600">Loading invitation...</p>
         </div>
       </div>
@@ -204,115 +173,65 @@ END:VCALENDAR`;
 
   if (submitted) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <header className="bg-white shadow-sm border-b">
-          <div className="container mx-auto px-4 py-4">
-            <div className="flex items-center gap-4">
-              <Button 
-                variant="ghost" 
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-orange-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md text-center">
+          <CardHeader>
+            <div className="mx-auto w-16 h-16 rounded-full flex items-center justify-center mb-4" style={{ backgroundColor: '#1155cc' }}>
+              <Check className="w-8 h-8 text-white" />
+            </div>
+            <CardTitle>Response Submitted!</CardTitle>
+            <CardDescription>
+              Thanks for responding to the invitation for "{activity.title}".
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <div className="font-medium">Your Response: <Badge>{response}</Badge></div>
+              {availabilityNote && (
+                <div className="text-sm text-gray-600 mt-2">
+                  Note: {availabilityNote}
+                </div>
+              )}
+              {venueSuggestion && (
+                <div className="text-sm text-gray-600 mt-2">
+                  Venue suggestion: {venueSuggestion}
+                </div>
+              )}
+            </div>
+            
+            <div className="space-y-3">
+              <Button
                 onClick={() => navigate('/')}
-                className="text-gray-600"
+                className="w-full"
+                style={{ backgroundColor: '#1155cc', color: 'white' }}
               >
-                <ArrowLeft className="w-4 h-4 mr-2" />
                 Back to Dashboard
               </Button>
-              <h1 className="text-xl font-semibold">Response Submitted</h1>
             </div>
-          </div>
-        </header>
-
-        <div className="container mx-auto px-4 py-8 max-w-2xl">
-          <Card className="text-center border-green-200 bg-green-50">
-            <CardHeader>
-              <div className="mx-auto w-16 h-16 rounded-full flex items-center justify-center mb-4" style={{ backgroundColor: '#1155cc' }}>
-                <Check className="w-8 h-8 text-white" />
-              </div>
-              <CardTitle>Response Submitted!</CardTitle>
-              <CardDescription>
-                Thanks for responding to the invitation for "{activity.title}".
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="p-4 bg-white rounded-lg">
-                <div className="font-medium">Your Response: <Badge>{response}</Badge></div>
-                {availabilityNote && (
-                  <div className="text-sm text-gray-600 mt-2">
-                    Note: {availabilityNote}
-                  </div>
-                )}
-                {venueSuggestion && (
-                  <div className="text-sm text-gray-600 mt-2">
-                    Venue suggestion: {venueSuggestion}
-                  </div>
-                )}
-              </div>
-              
-              <div className="space-y-3">
-                <Button 
-                  onClick={downloadCalendarEvent}
-                  variant="outline"
-                  className="w-full"
-                >
-                  <Download className="w-4 h-4 mr-2" />
-                  Add to Calendar
-                </Button>
-                
-                <Button 
-                  onClick={() => navigate('/')}
-                  className="w-full"
-                  style={{ backgroundColor: '#1155cc', color: 'white' }}
-                >
-                  Back to Dashboard
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow-sm border-b">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center gap-4">
-            <Button 
-              variant="ghost" 
-              onClick={() => navigate('/')}
-              className="text-gray-600"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Dashboard
-            </Button>
-            <h1 className="text-xl font-semibold">Activity Invitation</h1>
-            {activity.deadline && (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-orange-50">
+      <div className="container mx-auto px-4 py-8 max-w-2xl">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold mb-2">
+            <span style={{ color: '#ff9900' }}>Sunnyside</span>
+          </h1>
+          <p className="text-gray-600">You've been invited to an activity!</p>
+          {activity.deadline && (
+            <div className="mt-2">
               <Badge variant="outline" className="text-orange-600 border-orange-300">
                 <Clock className="w-3 h-3 mr-1" />
                 {getDeadlineText()}
               </Badge>
-            )}
-          </div>
-        </div>
-      </header>
-
-      <div className="container mx-auto px-4 py-8 max-w-2xl">
-        {/* In-App Notification */}
-        <Card className="mb-6 border-blue-200 bg-blue-50">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#1155cc' }}>
-                <Bell className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-blue-900">New Activity Invitation</h3>
-                <p className="text-blue-700 text-sm">
-                  You've been invited to join "{activity.title}"
-                </p>
-              </div>
             </div>
-          </CardContent>
-        </Card>
+          )}
+        </div>
 
         {/* Activity Details */}
         <Card className="mb-6">
@@ -322,7 +241,7 @@ END:VCALENDAR`;
               {activity.title}
             </CardTitle>
             <CardDescription>
-              Organized by {activity.organizerName || 'Someone'}
+              Organized by {activity.organizer_name || activity.organizerName || 'Someone'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -332,10 +251,14 @@ END:VCALENDAR`;
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <Calendar className="w-4 h-4" />
-                  Proposed Dates
+                  Possible Dates
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant="outline">{getSelectedDaysDisplay()}</Badge>
+                  {activity.selected_days?.map((day: string) => (
+                    <Badge key={day} variant="outline">{day}</Badge>
+                  )) || activity.selectedDays?.map((day: string) => (
+                    <Badge key={day} variant="outline">{day}</Badge>
+                  )) || <Badge variant="outline">Flexible dates</Badge>}
                 </div>
               </div>
               
@@ -344,40 +267,36 @@ END:VCALENDAR`;
                   <Cloud className="w-4 h-4" />
                   Weather Preference
                 </div>
-                <Badge variant="outline">{activity.weatherPreference}</Badge>
+                <Badge variant="outline">{activity.weather_preference || activity.weatherPreference}</Badge>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Weather Forecast */}
-        {activity.weatherData && (
+        {/* Activity Date (if finalized) */}
+        {(activity.selected_date || activity.selectedDate) && (
           <Card className="mb-6">
             <CardHeader>
-              <CardTitle>Weather Forecast</CardTitle>
+              <CardTitle>Activity Date</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {activity.weatherData.map((day, index) => (
-                  <div key={index} className="p-3 border rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium">{day.day}</span>
-                      <span className="text-lg">{day.temperature}°C</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600 capitalize">{day.condition}</span>
-                      <Badge 
-                        className={
-                          day.suitability === 'excellent' ? 'bg-green-100 text-green-800' :
-                          day.suitability === 'good' ? 'bg-blue-100 text-blue-800' :
-                          'bg-yellow-100 text-yellow-800'
-                        }
-                      >
-                        {day.suitability}
-                      </Badge>
-                    </div>
+              <div className="p-3 border rounded-lg">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4" />
+                  <span className="font-medium">
+                    {new Date(activity.selected_date || activity.selectedDate).toLocaleDateString('en-US', {
+                      weekday: 'long',
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric'
+                    })}
+                  </span>
+                </div>
+                {(activity.timeframe || activity.time_frame) && (
+                  <div className="mt-2 text-sm text-gray-600">
+                    Time: {activity.timeframe || activity.time_frame}
                   </div>
-                ))}
+                )}
               </div>
             </CardContent>
           </Card>
@@ -388,7 +307,7 @@ END:VCALENDAR`;
           <CardHeader>
             <CardTitle>Your Response</CardTitle>
             <CardDescription>
-              Let the organizer know if you can join
+              Let {activity.organizer_name || activity.organizerName || 'the organizer'} know if you can join
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -436,15 +355,15 @@ END:VCALENDAR`;
                             {calendarSuggestions[0]}
                           </p>
                           <div className="flex gap-2">
-                            <Button 
-                              size="sm" 
+                            <Button
+                              size="sm"
                               onClick={() => {/* Keep the suggestion */}}
                               style={{ backgroundColor: '#1155cc', color: 'white' }}
                             >
                               Use This
                             </Button>
-                            <Button 
-                              size="sm" 
+                            <Button
+                              size="sm"
                               variant="outline"
                               onClick={() => {
                                 setShowCustomNote(true);
@@ -466,7 +385,7 @@ END:VCALENDAR`;
                     <Label htmlFor="availability">Your Availability</Label>
                     <Textarea
                       id="availability"
-                      placeholder="Let them know about your availability or suggest alternative dates..."
+                      placeholder="Add a note about your availability (optional)"
                       value={availabilityNote}
                       onChange={(e) => setAvailabilityNote(e.target.value)}
                     />
@@ -477,16 +396,16 @@ END:VCALENDAR`;
           </CardContent>
         </Card>
 
-        {/* Activity Preferences - Pre-filled from profile */}
+        {/* Activity Preferences */}
         {(response === 'yes' || response === 'maybe') && (
           <Card className="mb-6">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Heart className="w-5 h-5" />
-                Your Activity Preferences
+                Your Activity Preferences (Optional)
               </CardTitle>
               <CardDescription>
-                Based on your profile preferences. You can adjust these for this specific activity.
+                Pre-filled from your profile. You can adjust these for this specific activity.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -532,7 +451,7 @@ END:VCALENDAR`;
         {response && (
           <Card className="mb-6">
             <CardContent className="pt-6">
-              <Button 
+              <Button
                 onClick={handleSubmit}
                 className="w-full"
                 style={{ backgroundColor: '#1155cc', color: 'white' }}
@@ -542,6 +461,20 @@ END:VCALENDAR`;
             </CardContent>
           </Card>
         )}
+
+        {/* Back to Dashboard */}
+        <Card>
+          <CardContent className="text-center py-6">
+            <Button
+              onClick={() => navigate('/')}
+              variant="outline"
+              style={{ borderColor: '#1155cc', color: '#1155cc' }}
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Dashboard
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

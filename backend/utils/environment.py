@@ -58,10 +58,10 @@ def get_invite_link(activity_id: str, guest_email: Optional[str] = None) -> str:
         str: Complete invite link
     """
     base_url = get_frontend_url()
-    invite_path = f"/invite/{activity_id}"
+    invite_path = f"/guest?activity={activity_id}"
     
     if guest_email:
-        invite_path += f"?email={guest_email}"
+        invite_path += f"&email={guest_email}"
     
     return f"{base_url}{invite_path}"
 

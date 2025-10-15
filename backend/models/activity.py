@@ -141,3 +141,17 @@ class GuestResponseRequest(BaseModel):
     availability_note: Optional[str] = Field(None, max_length=500)
     preferences: Optional[Dict[str, Any]] = Field(default_factory=dict)
     venue_suggestion: Optional[str] = Field(None, max_length=200)
+
+
+class UserResponseRequest(BaseModel):
+    """Model for registered user response submission."""
+    response: InviteeResponse = Field(..., description="User's response: yes, no, maybe")
+    availability_note: Optional[str] = Field(None, max_length=500, alias="availabilityNote")
+    preferences: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    venue_suggestion: Optional[str] = Field(None, max_length=200, alias="venueSuggestion")
+
+
+class ActivitySummaryResponse(BaseModel):
+    """Model for activity summary response."""
+    activity: ActivityResponse
+    summary: Dict[str, Any]

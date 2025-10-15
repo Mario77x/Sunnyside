@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, User, MapPin, Heart, Settings, Users, UserPlus, UserCheck, Mail, MessageSquare, Edit3, Trash2, Check, X, Loader2 } from 'lucide-react';
+import { ArrowLeft, User, MapPin, Heart, Settings, Users, UserPlus, UserCheck, Mail, MessageSquare, Edit3, Trash2, Check, X, Loader2, AlertTriangle } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService, Contact, ContactListResponse } from '@/services/api';
@@ -39,11 +39,15 @@ const Account = () => {
   // Contacts state
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactRequests, setContactRequests] = useState<Contact[]>([]);
+  const [pendingInvitations, setPendingInvitations] = useState<any[]>([]);
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const [isLoadingRequests, setIsLoadingRequests] = useState(false);
+  const [isLoadingInvitations, setIsLoadingInvitations] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   // Form states for contacts
   const [contactEmail, setContactEmail] = useState('');
@@ -117,6 +121,7 @@ const Account = () => {
     // Load contacts if authenticated
     loadContacts();
     loadContactRequests();
+    loadPendingInvitations();
   }, [navigate, isAuthenticated, authUser, authLoading, isProfileLoading]);
 
   const loadContacts = async () => {
@@ -151,6 +156,22 @@ const Account = () => {
     }
   };
 
+  const loadPendingInvitations = async () => {
+    try {
+      setIsLoadingInvitations(true);
+      const response = await apiService.getPendingInvitations();
+      if (response.data) {
+        setPendingInvitations(response.data);
+      } else {
+        showError(response.error || 'Failed to load pending invitations');
+      }
+    } catch (error) {
+      showError('Network error occurred');
+    } finally {
+      setIsLoadingInvitations(false);
+    }
+  };
+
   const handleSendContactRequest = async () => {
     if (!contactEmail.trim()) {
       showError('Please enter an email address');
@@ -169,8 +190,9 @@ const Account = () => {
         setContactEmail('');
         setContactMessage('');
         setIsDialogOpen(false);
-        // Refresh contacts in case they were already contacts
+        // Refresh contacts and pending invitations
         loadContacts();
+        loadPendingInvitations();
       } else {
         showError(response.error || 'Failed to send contact request');
       }
@@ -344,6 +366,33 @@ const Account = () => {
     </div>
   );
 
+  const PendingInvitationCard = ({ invitation }: { invitation: any }) => (
+    <div className="p-4 border rounded-lg bg-yellow-50 border-yellow-200">
+      <div className="flex items-start justify-between mb-2">
+        <div>
+          <h3 className="font-semibold">Invitation Sent</h3>
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <Mail className="w-3 h-3" />
+            <span>{invitation.invitee_email}</span>
+          </div>
+        </div>
+        <Badge variant="outline" className="bg-yellow-100 text-yellow-800 border-yellow-300">
+          Pending
+        </Badge>
+      </div>
+      {invitation.message && (
+        <div className="flex items-start gap-2 text-sm text-gray-600 mb-3">
+          <MessageSquare className="w-3 h-3 mt-0.5 flex-shrink-0" />
+          <span>"{invitation.message}"</span>
+        </div>
+      )}
+      <div className="text-xs text-gray-400">
+        <div>Sent {new Date(invitation.created_at).toLocaleDateString()}</div>
+        <div>Expires {new Date(invitation.expires_at).toLocaleDateString()}</div>
+      </div>
+    </div>
+  );
+
   const handleSave = () => {
     const updatedUser = {
       ...user,
@@ -356,11 +405,24 @@ const Account = () => {
     showSuccess('Account updated successfully!');
   };
 
-  const handleDeleteAccount = () => {
-    if (window.confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-      localStorage.removeItem('sunnyside_user');
-      localStorage.removeItem('sunnyside_activities');
-      navigate('/');
+  const handleDeleteAccount = async () => {
+    try {
+      setIsDeletingAccount(true);
+      const response = await apiService.deleteAccount();
+      
+      if (response.data) {
+        showSuccess('Account deleted successfully');
+        // Log out the user and redirect to home
+        logout();
+        navigate('/');
+      } else {
+        showError(response.error || 'Failed to delete account');
+      }
+    } catch (error) {
+      showError('Network error occurred while deleting account');
+    } finally {
+      setIsDeletingAccount(false);
+      setIsDeleteDialogOpen(false);
     }
   };
 
@@ -602,7 +664,7 @@ const Account = () => {
                 </TabsTrigger>
                 <TabsTrigger value="requests" className="flex items-center gap-2">
                   <UserCheck className="w-4 h-4" />
-                  Pending Requests ({contactRequests.length})
+                  Pending ({contactRequests.length + pendingInvitations.length})
                 </TabsTrigger>
               </TabsList>
 
@@ -684,8 +746,8 @@ const Account = () => {
               <p className="text-sm text-gray-600 mb-4">
                 Once you delete your account, there is no going back. Please be certain.
               </p>
-              <Button 
-                onClick={handleDeleteAccount}
+              <Button
+                onClick={() => setIsDeleteDialogOpen(true)}
                 variant="destructive"
                 className="w-full"
               >
@@ -753,6 +815,58 @@ const Account = () => {
               style={{ backgroundColor: '#1155cc', color: 'white' }}
             >
               Update Contact
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Account Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5" />
+              Delete Account
+            </DialogTitle>
+            <DialogDescription className="text-gray-700">
+              This action cannot be undone. This will permanently delete your account and remove all your data from our servers.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+              <h4 className="font-semibold text-red-800 mb-2">What will be deleted:</h4>
+              <ul className="text-sm text-red-700 space-y-1">
+                <li>• Your profile and account information</li>
+                <li>• All your activities and invitations</li>
+                <li>• Your contacts and contact requests</li>
+                <li>• All notifications and preferences</li>
+              </ul>
+            </div>
+            <p className="text-sm text-gray-600">
+              Are you absolutely sure you want to delete your account? This action is irreversible.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsDeleteDialogOpen(false)}
+              disabled={isDeletingAccount}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteAccount}
+              disabled={isDeletingAccount}
+            >
+              {isDeletingAccount ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete Account'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

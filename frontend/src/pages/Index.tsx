@@ -1,9 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Calendar, Users, Cloud, Clock, CheckCircle, Archive, UserCheck, Settings, TestTube, Loader2, Wifi, WifiOff } from 'lucide-react';
+import { Plus, Calendar, Users, Cloud, Clock, CheckCircle, Archive, UserCheck, Settings, TestTube, Loader2, Wifi, WifiOff, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger
+} from '@/components/ui/alert-dialog';
 import { useNavigate } from 'react-router-dom';
 import { showSuccess, showError } from '@/utils/toast';
 import { calculateDeadline } from '@/utils/deadlineCalculator';
@@ -139,6 +150,42 @@ const Index = () => {
     }
   };
 
+  const handleDeleteActivity = async (activityId: string, activityTitle: string) => {
+    try {
+      const response = await apiService.deleteActivity(activityId);
+      
+      if (response.error) {
+        showError(response.error);
+      } else {
+        showSuccess(`Activity "${activityTitle}" deleted successfully`);
+        // Reload activities to update the list
+        await loadActivities();
+      }
+    } catch (error) {
+      showError('Failed to delete activity. Please try again.');
+    }
+  };
+
+  const getDeleteModalContent = (activity: Activity) => {
+    const hasInvitees = activity.invitees && activity.invitees.length > 0;
+    const isInvitationsSent = activity.status === 'invitations-sent' ||
+                             activity.status === 'collecting-responses' ||
+                             activity.status === 'ready-for-recommendations' ||
+                             activity.status === 'recommendations-sent';
+    
+    if (hasInvitees && isInvitationsSent) {
+      return {
+        title: 'Delete Activity and Notify Invitees?',
+        description: `Deleting "${activity.title}" will notify all ${activity.invitees.length} invitee${activity.invitees.length > 1 ? 's' : ''} that the activity has been cancelled. This action cannot be undone.`
+      };
+    } else {
+      return {
+        title: 'Delete Activity?',
+        description: `Are you sure you want to delete "${activity.title}"? This action cannot be undone.`
+      };
+    }
+  };
+
   const handleSelectActivity = (activity: Activity) => {
     // Navigate based on activity status and user role
     if (activity.organizer_id === user?.id) {
@@ -154,7 +201,37 @@ const Index = () => {
       }
     } else {
       // Invitee flow (for registered users)
-      navigate('/invitee-response', { state: { activity } });
+      // Check if user has already submitted a response
+      let hasSubmittedResponse = false;
+      
+      // First check the backend data (activity.invitees)
+      const userInvitee = activity.invitees?.find(invitee =>
+        invitee.email === user?.email
+      );
+      
+      if (userInvitee && userInvitee.response && userInvitee.response !== 'pending') {
+        hasSubmittedResponse = true;
+      }
+      
+      // Also check localStorage for responses (fallback for current implementation)
+      if (!hasSubmittedResponse && user) {
+        const activities = JSON.parse(localStorage.getItem('sunnyside_activities') || '[]');
+        const storedActivity = activities.find(act => act.id === activity.id);
+        if (storedActivity && storedActivity.responses) {
+          const userResponse = storedActivity.responses.find(r => r.userId === user.id);
+          if (userResponse && userResponse.response) {
+            hasSubmittedResponse = true;
+          }
+        }
+      }
+      
+      if (hasSubmittedResponse) {
+        // User has already responded, show summary
+        navigate('/invitee-activity-summary', { state: { activity } });
+      } else {
+        // User hasn't responded yet, show response form
+        navigate('/invitee-response', { state: { activity } });
+      }
     }
   };
 
@@ -205,38 +282,78 @@ const Index = () => {
     showStatus?: boolean;
     isOrganizer?: boolean;
   }) => (
-    <div 
-      className="p-4 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
-      onClick={() => handleSelectActivity(activity)}
-    >
+    <div className="p-4 border rounded-lg hover:bg-gray-50 transition-colors">
       <div className="flex items-start justify-between mb-2">
-        <h3 className="font-semibold">{activity.title}</h3>
-        {showStatus && getStatusBadge(activity)}
+        <div
+          className="flex-1 cursor-pointer"
+          onClick={() => handleSelectActivity(activity)}
+        >
+          <h3 className="font-semibold">{activity.title}</h3>
+        </div>
+        <div className="flex items-center gap-2">
+          {showStatus && getStatusBadge(activity)}
+          {isOrganizer && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50 p-1 h-auto"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{getDeleteModalContent(activity).title}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {getDeleteModalContent(activity).description}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => handleDeleteActivity(activity.id, activity.title)}
+                    className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                  >
+                    Delete Activity
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </div>
       </div>
-      <p className="text-gray-600 text-sm mb-3">{activity.description}</p>
-      <div className="flex items-center gap-4 text-sm text-gray-500">
-        {activity.selected_date && (
+      <div
+        className="cursor-pointer"
+        onClick={() => handleSelectActivity(activity)}
+      >
+        <p className="text-gray-600 text-sm mb-3">{activity.description}</p>
+        <div className="flex items-center gap-4 text-sm text-gray-500">
+          {activity.selected_date && (
+            <span className="flex items-center gap-1">
+              <Calendar className="w-3 h-3" />
+              {new Date(activity.selected_date).toLocaleDateString()}
+            </span>
+          )}
+          {activity.selected_days && activity.selected_days.length > 0 && (
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              {activity.selected_days.join(', ')}
+            </span>
+          )}
           <span className="flex items-center gap-1">
-            <Calendar className="w-3 h-3" />
-            {new Date(activity.selected_date).toLocaleDateString()}
+            <Users className="w-3 h-3" />
+            {activity.invitees?.length || 0} invitees
           </span>
-        )}
-        {activity.selected_days && activity.selected_days.length > 0 && (
-          <span className="flex items-center gap-1">
-            <Clock className="w-3 h-3" />
-            {activity.selected_days.join(', ')}
-          </span>
-        )}
-        <span className="flex items-center gap-1">
-          <Users className="w-3 h-3" />
-          {activity.invitees?.length || 0} invitees
-        </span>
-        {!isOrganizer && (
-          <span className="flex items-center gap-1">
-            <UserCheck className="w-3 h-3" />
-            Invited by Someone
-          </span>
-        )}
+          {!isOrganizer && (
+            <span className="flex items-center gap-1">
+              <UserCheck className="w-3 h-3" />
+              Invited by Someone
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -257,20 +374,6 @@ const Index = () => {
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-orange-50">
         <div className="container mx-auto px-4 py-16">
           <div className="text-center max-w-4xl mx-auto">
-            {/* Backend Status for Landing Page */}
-            <div className="mb-4 flex justify-center">
-              {backendStatus ? (
-                <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-3 py-1 rounded-full">
-                  <Wifi className="w-4 h-4" />
-                  <span>Backend Status: {backendStatus.status}</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 px-3 py-1 rounded-full">
-                  <WifiOff className="w-4 h-4" />
-                  <span>{backendError || 'Backend offline'}</span>
-                </div>
-              )}
-            </div>
             
             {/* Logo */}
             <div className="mb-8">
@@ -476,14 +579,6 @@ const Index = () => {
               >
                 <TestTube className="w-3 h-3 mr-1" />
                 Create Test Invite
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => navigate('/guest?invite=demo123')}
-                className="text-xs"
-                style={{ borderColor: '#ff9900', color: '#ff9900' }}
-              >
-                Test Guest Experience
               </Button>
             </div>
           )}

@@ -314,6 +314,15 @@ class ApiService {
     return this.handleResponse<Activity>(response);
   }
 
+  async deleteActivity(activityId: string): Promise<ApiResponse<{ message: string }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/activities/${activityId}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<{ message: string }>(response);
+  }
+
   async saveDraft(activityData: Partial<Activity>): Promise<ApiResponse<Activity>> {
     const response = await fetch(`${API_BASE_URL}/api/v1/activities/draft`, {
       method: 'POST',
@@ -327,7 +336,7 @@ class ApiService {
   async inviteGuests(activityId: string, inviteData: {
     invitees: Array<{ name: string; email: string }>;
     custom_message?: string;
-  }): Promise<ApiResponse<{ message: string; invited_count: number }>> {
+  }): Promise<ApiResponse<{ message: string; invited_count: number; guest_experience_link?: string }>> {
     const response = await fetch(`${API_BASE_URL}/api/v1/activities/${activityId}/invite`, {
       method: 'POST',
       headers: this.getAuthHeaders(),
@@ -630,6 +639,16 @@ class ApiService {
 
   async removeContact(contactId: string): Promise<ApiResponse<{ message: string }>> {
     const response = await fetch(`${API_BASE_URL}/api/v1/contacts/${contactId}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<{ message: string }>(response);
+  }
+
+  // User account management
+  async deleteAccount(): Promise<ApiResponse<{ message: string }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/users/me`, {
       method: 'DELETE',
       headers: this.getAuthHeaders()
     });

@@ -17,6 +17,7 @@ import VenuePoll from "./pages/VenuePoll";
 import PostActivityFeedback from "./pages/PostActivityFeedback";
 import Account from "./pages/Account";
 import ActivitySummary from "./pages/ActivitySummary";
+import InviteeActivitySummary from "./pages/InviteeActivitySummary";
 import ActivityRecommendations from "./pages/ActivityRecommendations";
 import ActivitySuggestions from "./pages/ActivitySuggestions";
 import NotFound from "./pages/NotFound";
@@ -46,6 +47,7 @@ const App = () => (
             <Route path="/post-activity-feedback" element={<PostActivityFeedback />} />
             <Route path="/account" element={<Account />} />
             <Route path="/activity-summary" element={<ActivitySummary />} />
+            <Route path="/invitee-activity-summary" element={<InviteeActivitySummary />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

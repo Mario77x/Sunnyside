@@ -2,21 +2,175 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger
+} from '@/components/ui/alert-dialog';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Users, Calendar, Mail, MessageSquare, CheckCircle, Clock, XCircle } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Mail, MessageSquare, CheckCircle, Clock, XCircle, Trash2 } from 'lucide-react';
+import { apiService } from '@/services/api';
+import { showSuccess, showError } from '@/utils/toast';
+import { useAuth } from '@/contexts/AuthContext';
 
 const ActivitySummary = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const [activity, setActivity] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [guestExperienceLink, setGuestExperienceLink] = useState<string | null>(null);
+
+  // 1. Component Mount Logging
+  console.log('🔍 [ActivitySummary] Component mounted/re-rendered');
 
   useEffect(() => {
+    // 2. useEffect Hook Logging
+    console.log('🔍 [ActivitySummary] useEffect triggered');
+    console.log('🔍 [ActivitySummary] location.state:', location.state);
+    console.log('🔍 [ActivitySummary] Current window.location.origin:', window.location.origin);
+    
     if (location.state?.activity) {
       setActivity(location.state.activity);
+      console.log('🔍 [ActivitySummary] Activity set from location.state:', location.state.activity);
+      
+      // Get guest experience link if passed from InviteGuests
+      if (location.state?.guestExperienceLink) {
+        console.log('🔍 [ActivitySummary] Guest experience link found in location.state:', location.state.guestExperienceLink);
+        // Replace the backend-generated domain with current window origin
+        const backendLink = location.state.guestExperienceLink;
+        const url = new URL(backendLink);
+        const correctedLink = `${window.location.origin}${url.pathname}${url.search}`;
+        console.log('🔍 [ActivitySummary] Corrected guest experience link:', correctedLink);
+        setGuestExperienceLink(correctedLink);
+      } else {
+        console.log('🔍 [ActivitySummary] No guest experience link in location.state, checking sessionStorage');
+        // Check sessionStorage for guest experience link
+        const activityId = location.state.activity.id;
+        console.log('🔍 [ActivitySummary] Activity ID for sessionStorage lookup:', activityId);
+        const storedLink = sessionStorage.getItem(`guestExperienceLink_${activityId}`);
+        console.log('🔍 [ActivitySummary] Retrieved from sessionStorage:', storedLink);
+        
+        if (storedLink) {
+          console.log('🔍 [ActivitySummary] Setting guest experience link from sessionStorage:', storedLink);
+          // Also correct the stored link if it has wrong domain
+          try {
+            const url = new URL(storedLink);
+            const correctedStoredLink = `${window.location.origin}${url.pathname}${url.search}`;
+            console.log('🔍 [ActivitySummary] Corrected stored link:', correctedStoredLink);
+            setGuestExperienceLink(correctedStoredLink);
+            // Update sessionStorage with corrected link
+            sessionStorage.setItem(`guestExperienceLink_${activityId}`, correctedStoredLink);
+          } catch (error) {
+            console.log('🔍 [ActivitySummary] Error parsing stored link, using as-is:', storedLink);
+            setGuestExperienceLink(storedLink);
+          }
+        } else {
+          console.log('🔍 [ActivitySummary] No guest experience link found in sessionStorage');
+          // Generate a guest experience link for this activity if it has invitees
+          if (location.state.activity.invitees && location.state.activity.invitees.length > 0) {
+            console.log('🔍 [ActivitySummary] Activity has invitees, generating guest experience link');
+            // Find the first guest invitee (non-registered user)
+            const guestInvitee = location.state.activity.invitees.find(invitee => !invitee.user_id);
+            if (guestInvitee) {
+              const generatedLink = `${window.location.origin}/guest?activity=${activityId}&email=${encodeURIComponent(guestInvitee.email)}`;
+              console.log('🔍 [ActivitySummary] Generated guest experience link:', generatedLink);
+              setGuestExperienceLink(generatedLink);
+              // Store it for future use
+              sessionStorage.setItem(`guestExperienceLink_${activityId}`, generatedLink);
+            } else {
+              console.log('🔍 [ActivitySummary] No guest invitees found, cannot generate link');
+            }
+          }
+        }
+      }
     } else {
+      console.log('🔍 [ActivitySummary] No activity in location.state, navigating to home');
       navigate('/');
     }
   }, [location, navigate]);
+
+  // Additional useEffect to log final guestExperienceLink state
+  useEffect(() => {
+    console.log('🔍 [ActivitySummary] Final guestExperienceLink state:', guestExperienceLink);
+  }, [guestExperienceLink]);
+
+  const handleDeleteActivity = async () => {
+    if (!activity?.id) return;
+    
+    setIsDeleting(true);
+    try {
+      const response = await apiService.deleteActivity(activity.id);
+      
+      if (response.error) {
+        showError(response.error);
+      } else {
+        showSuccess('Activity deleted successfully');
+        navigate('/', { replace: true });
+      }
+    } catch (error) {
+      showError('Failed to delete activity. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleTestGuestExperience = () => {
+    // 4. handleTestGuestExperience Function Logging
+    console.log('🔍 [ActivitySummary] handleTestGuestExperience called - onClick event fired!');
+    console.log('🔍 [ActivitySummary] guestExperienceLink in handler:', guestExperienceLink);
+    
+    if (guestExperienceLink) {
+      console.log('🔍 [ActivitySummary] Opening guest experience link:', guestExperienceLink);
+      try {
+        window.open(guestExperienceLink, '_blank');
+        console.log('🔍 [ActivitySummary] window.open called successfully');
+      } catch (error) {
+        console.error('🔍 [ActivitySummary] Error opening window:', error);
+        // Fallback: try to navigate in the same window
+        window.location.href = guestExperienceLink;
+      }
+    } else {
+      console.log('🔍 [ActivitySummary] No guestExperienceLink available - button should not be visible');
+      // Generate a fallback link if we have activity data
+      if (activity?.id && activity?.invitees?.length > 0) {
+        const guestInvitee = activity.invitees.find(invitee => !invitee.user_id);
+        if (guestInvitee) {
+          const fallbackLink = `${window.location.origin}/guest?activity=${activity.id}&email=${encodeURIComponent(guestInvitee.email)}`;
+          console.log('🔍 [ActivitySummary] Using fallback link:', fallbackLink);
+          window.open(fallbackLink, '_blank');
+        }
+      }
+    }
+  };
+
+  const getDeleteModalContent = () => {
+    if (!activity) return { title: '', description: '' };
+    
+    const hasInvitees = activity.invitees && activity.invitees.length > 0;
+    const isInvitationsSent = activity.status === 'invitations-sent' ||
+                             activity.status === 'collecting-responses' ||
+                             activity.status === 'ready-for-recommendations' ||
+                             activity.status === 'recommendations-sent';
+    
+    if (hasInvitees && isInvitationsSent) {
+      return {
+        title: 'Delete Activity and Notify Invitees?',
+        description: `Deleting this activity will notify all ${activity.invitees.length} invitee${activity.invitees.length > 1 ? 's' : ''} that the activity has been cancelled. This action cannot be undone.`
+      };
+    } else {
+      return {
+        title: 'Delete Activity?',
+        description: 'Are you sure you want to delete this activity? This action cannot be undone.'
+      };
+    }
+  };
 
   const getResponseIcon = (response) => {
     switch (response) {
@@ -47,16 +201,50 @@ const ActivitySummary = () => {
       {/* Header */}
       <header className="bg-white shadow-sm border-b">
         <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center gap-4">
-            <Button 
-              variant="ghost" 
-              onClick={() => navigate('/')}
-              className="text-gray-600"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Dashboard
-            </Button>
-            <h1 className="text-xl font-semibold">Activity Summary</h1>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Button
+                variant="ghost"
+                onClick={() => navigate('/')}
+                className="text-gray-600"
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back to Dashboard
+              </Button>
+              <h1 className="text-xl font-semibold">Activity Summary</h1>
+            </div>
+            
+            {/* Delete Activity Button */}
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete Activity
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{getDeleteModalContent().title}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {getDeleteModalContent().description}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleDeleteActivity}
+                    disabled={isDeleting}
+                    className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                  >
+                    {isDeleting ? 'Deleting...' : 'Delete Activity'}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
       </header>
@@ -197,8 +385,25 @@ const ActivitySummary = () => {
               </div>
             </div>
             
-            <div className="pt-4 border-t">
-              <Button 
+            <div className="pt-4 border-t space-y-3">
+              {/* 3. Button Render Logging */}
+              {(() => {
+                console.log('🔍 [ActivitySummary] Button render check - guestExperienceLink:', guestExperienceLink);
+                console.log('🔍 [ActivitySummary] Button render check - user?.id:', user?.id);
+                console.log('🔍 [ActivitySummary] Button render check - activity?.organizer_id:', activity?.organizer_id);
+                return null;
+              })()}
+              {guestExperienceLink && user?.id === activity?.organizer_id && (
+                <Button
+                  onClick={handleTestGuestExperience}
+                  variant="outline"
+                  className="w-full"
+                  style={{ borderColor: '#1155cc', color: '#1155cc' }}
+                >
+                  Test Guest Experience
+                </Button>
+              )}
+              <Button
                 onClick={() => navigate('/')}
                 className="w-full"
                 style={{ backgroundColor: '#1155cc', color: 'white' }}

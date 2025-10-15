@@ -123,6 +123,21 @@ async def signup(
                 # Log the error but don't fail the signup process
                 print(f"Error processing invitation token: {str(e)}")
         
+        # Send welcome email to the new user
+        try:
+            from backend.utils.environment import get_frontend_url
+            notification_service = NotificationService()
+            app_link = get_frontend_url()
+            
+            await notification_service.send_welcome_email(
+                to_email=user_data.email,
+                to_name=user_data.name,
+                app_link=app_link
+            )
+        except Exception as e:
+            # Log the error but don't fail the signup process
+            print(f"Error sending welcome email: {str(e)}")
+        
         # Create access token
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(

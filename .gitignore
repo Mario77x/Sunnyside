@@ -5,6 +5,7 @@
 .env.development.local
 .env.test.local
 .env.production.local
+.test-env
 */.env
 */.env.*
 backend/.env

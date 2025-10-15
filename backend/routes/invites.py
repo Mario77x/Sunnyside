@@ -3,6 +3,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from typing import Optional
 from bson import ObjectId
 from datetime import datetime
+import logging
 
 from backend.models.invite import (
     GuestResponseRequest,
@@ -10,6 +11,10 @@ from backend.models.invite import (
     GuestResponseSubmission
 )
 from backend.models.activity import InviteeResponse
+from backend.services.notifications import NotificationService
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/invites", tags=["invites"])
 
@@ -180,10 +185,47 @@ async def submit_guest_response(
         activity = activity_data["activity"]
         guest_name = None
         for invitee in activity.get("invitees", []):
-            if (invitee.get("email") == response_data.guest_id or 
+            if (invitee.get("email") == response_data.guest_id or
                 str(invitee.get("id", "")) == response_data.guest_id):
                 guest_name = invitee.get("name")
                 break
+        
+        # Send notification to organizer (THIS WAS MISSING!)
+        logger.info(f"Sending notification to organizer for guest response from {guest_name}")
+        notification_service = NotificationService()
+        organizer = await db.users.find_one({"_id": activity["organizer_id"]})
+        
+        if organizer:
+            # Create in-app notification
+            await notification_service.create_notification(
+                db,
+                str(activity["organizer_id"]),
+                f"{guest_name} responded '{response_data.response.value}' to {activity['title']}",
+                "activity_response",
+                {
+                    "activity_id": activity_id,
+                    "activity_title": activity["title"],
+                    "responder_name": guest_name,
+                    "response": response_data.response.value,
+                    "availability_note": response_data.availability_note,
+                    "venue_suggestion": response_data.venue_suggestion
+                }
+            )
+            
+            # Send email notification to organizer
+            email_sent = await notification_service.send_activity_response_notification_email(
+                to_email=organizer["email"],
+                to_name=organizer["name"],
+                responder_name=guest_name or "Guest",
+                activity_title=activity["title"],
+                response=response_data.response.value,
+                availability_note=response_data.availability_note,
+                venue_suggestion=response_data.venue_suggestion
+            )
+            
+            logger.info(f"Notification sent to organizer {organizer['name']} - Email: {email_sent}")
+        else:
+            logger.error(f"Could not find organizer for activity {activity_id}")
         
         return GuestResponseSubmission(
             message="Response submitted successfully",
