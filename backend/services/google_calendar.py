@@ -42,18 +42,28 @@ class GoogleCalendarService:
     def __init__(self):
         self.enabled = GOOGLE_CALENDAR_AVAILABLE
         if not self.enabled:
-            logger.warning("Google Calendar service initialized but not available")
+            logger.warning("Google Calendar service initialized but not available - missing dependencies")
+            return
+            
+        # Check for required environment variables
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        
+        if not client_id or not client_secret:
+            logger.warning(f"Google Calendar credentials missing - CLIENT_ID: {'✓' if client_id else '✗'}, CLIENT_SECRET: {'✓' if client_secret else '✗'}")
+            self.enabled = False
             return
             
         self.client_config = {
             "web": {
-                "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-                "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+                "client_id": client_id,
+                "client_secret": client_secret,
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "redirect_uris": [os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/calendar/callback")]
             }
         }
+        logger.info("Google Calendar service initialized successfully")
     
     def get_authorization_url(self, state: Optional[str] = None) -> str:
         """Generate the Google OAuth2 authorization URL."""

@@ -362,6 +362,16 @@ async def get_activity_recommendations(request: RecommendationsRequest) -> Recom
         HTTPException: If the request is invalid or processing fails
     """
     try:
+        # DEBUG: Log the incoming request payload
+        print(f"[DEBUG] Recommendations request received:")
+        print(f"[DEBUG] Query: {request.query}")
+        print(f"[DEBUG] Max results: {request.max_results}")
+        print(f"[DEBUG] Weather data: {request.weather_data}")
+        print(f"[DEBUG] Date: {request.date}")
+        print(f"[DEBUG] Indoor/outdoor preference: {request.indoor_outdoor_preference}")
+        print(f"[DEBUG] Location: {request.location}")
+        print(f"[DEBUG] Group size: {request.group_size}")
+        
         # Validate input
         if not request.query or not request.query.strip():
             raise HTTPException(

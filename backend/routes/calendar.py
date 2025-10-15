@@ -35,6 +35,18 @@ async def initiate_google_calendar_auth(
 ):
     """Initiate Google Calendar OAuth2 authentication flow."""
     try:
+        # Check if Google Calendar service is available
+        if not google_calendar_service.enabled:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "Google Calendar integration is not available",
+                    "reason": "Missing configuration or dependencies",
+                    "setup_required": True,
+                    "documentation": "See GOOGLE_CALENDAR_SETUP.md for setup instructions"
+                }
+            )
+        
         # Verify user is authenticated
         current_user = await get_current_user(credentials, db)
         
@@ -46,6 +58,8 @@ async def initiate_google_calendar_auth(
         
         return {"authorization_url": auth_url}
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error initiating Google Calendar auth: {str(e)}")
         raise HTTPException(

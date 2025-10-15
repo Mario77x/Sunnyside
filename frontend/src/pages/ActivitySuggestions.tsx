@@ -47,9 +47,9 @@ const ActivitySuggestions = () => {
       // Build context options from activity data
       const options = {
         date: activityData.selected_date,
-        indoor_outdoor_preference: activityData.weatherPreference,
+        indoor_outdoor_preference: activityData.weather_preference || activityData.weatherPreference,
         location: activityData.location || 'local',
-        group_size: activityData.groupSize ? parseInt(activityData.groupSize) : undefined,
+        group_size: activityData.group_size || (activityData.groupSize ? parseInt(activityData.groupSize) : undefined),
         weather_data: activityData.weather_data
       };
 
