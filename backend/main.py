@@ -86,16 +86,16 @@ def get_database_connection():
 
 # API v1 router
 from fastapi import APIRouter
-from .routes.auth import router as auth_router
-from .routes.activities import router as activities_router
-from .routes.invites import router as invites_router
-from .routes.weather import router as weather_router
-from .routes.llm import router as llm_router
-from .routes.notifications import router as notifications_router
-from .routes.contacts import router as contacts_router
-from .routes.users import router as users_router
-from .routes.deadlines import router as deadlines_router
-from .routes.calendar import router as calendar_router
+from backend.routes.auth import router as auth_router
+from backend.routes.activities import router as activities_router
+from backend.routes.invites import router as invites_router
+from backend.routes.weather import router as weather_router
+from backend.routes.llm import router as llm_router
+from backend.routes.notifications import router as notifications_router
+from backend.routes.contacts import router as contacts_router
+from backend.routes.users import router as users_router
+from backend.routes.deadlines import router as deadlines_router
+from backend.routes.calendar import router as calendar_router
 
 api_v1_router = APIRouter(prefix="/api/v1")
 
