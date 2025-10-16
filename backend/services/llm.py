@@ -8,7 +8,7 @@ import httpx
 import asyncio
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
-from .risk_assessment import risk_assessment_service
+from .risk_assessment import get_risk_assessment_service
 # import chromadb
 # from sentence_transformers import SentenceTransformer
 # from ..data.activities import get_activities_for_embedding
@@ -92,11 +92,12 @@ class LLMService:
         """
         try:
             # First, perform risk assessment on the user input
-            risk_assessment = await risk_assessment_service.analyze_text(user_input)
-            
+            risk_service = get_risk_assessment_service()
+            risk_assessment = await risk_service.analyze_text(user_input)
+
             # If content is flagged as unsafe, return error immediately
-            if not risk_assessment_service.is_content_safe(risk_assessment):
-                safety_message = risk_assessment_service.get_safety_message(risk_assessment)
+            if not risk_service.is_content_safe(risk_assessment):
+                safety_message = risk_service.get_safety_message(risk_assessment)
                 return {
                     "success": False,
                     "error": safety_message,
@@ -587,11 +588,12 @@ Important rules:
         """
         try:
             # First, perform risk assessment on the user query
-            risk_assessment = await risk_assessment_service.analyze_text(query)
-            
+            risk_service = get_risk_assessment_service()
+            risk_assessment = await risk_service.analyze_text(query)
+
             # If content is flagged as unsafe, return error immediately
-            if not risk_assessment_service.is_content_safe(risk_assessment):
-                safety_message = risk_assessment_service.get_safety_message(risk_assessment)
+            if not risk_service.is_content_safe(risk_assessment):
+                safety_message = risk_service.get_safety_message(risk_assessment)
                 return {
                     "success": False,
                     "error": safety_message,
@@ -844,11 +846,12 @@ Make the recommendations creative, engaging, and tailored to the user's query wh
         """
         try:
             # First, perform risk assessment on the activity description
-            risk_assessment = await risk_assessment_service.analyze_text(activity_description)
-            
+            risk_service = get_risk_assessment_service()
+            risk_assessment = await risk_service.analyze_text(activity_description)
+
             # If content is flagged as unsafe, return error immediately
-            if not risk_assessment_service.is_content_safe(risk_assessment):
-                safety_message = risk_assessment_service.get_safety_message(risk_assessment)
+            if not risk_service.is_content_safe(risk_assessment):
+                safety_message = risk_service.get_safety_message(risk_assessment)
                 return {
                     "success": False,
                     "error": safety_message,

@@ -15,6 +15,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { useCalendarAvailability } from '@/hooks/useCalendarAvailability';
 
 const InviteeResponse = () => {
   const navigate = useNavigate();
@@ -38,10 +39,7 @@ const InviteeResponse = () => {
     adventure: false
   });
   const [venueSuggestion, setVenueSuggestion] = useState('');
-  const [calendarSuggestions, setCalendarSuggestions] = useState([]);
   const [showCustomNote, setShowCustomNote] = useState(false);
-  const [calendarAvailability, setCalendarAvailability] = useState(null);
-  const [isLoadingCalendar, setIsLoadingCalendar] = useState(false);
   const [availabilityDate, setAvailabilityDate] = useState<Date | undefined>(undefined);
   const [availabilityTime, setAvailabilityTime] = useState('');
 
@@ -70,8 +68,7 @@ const InviteeResponse = () => {
       const isChange = location.state?.isResponseChange || false;
       setIsResponseChange(isChange);
       
-      // Generate calendar suggestions (mock)
-      generateCalendarSuggestions(activityData);
+      // Calendar suggestions will be handled by the useCalendarAvailability hook
       
       // Check if user already responded and pre-fill form for changes
       if (activityData && activityData.invitees && user) {
@@ -101,80 +98,53 @@ const InviteeResponse = () => {
     setIsLoading(false);
   }, [location, navigate, authLoading, isAuthenticated, user]);
 
-  const loadCalendarAvailability = async (activityData) => {
-    if (!user?.google_calendar_integrated) return;
+  // Calculate date range for calendar availability
+  const getCalendarDateRange = () => {
+    if (!activity) return { startDate: undefined, endDate: undefined };
     
-    setIsLoadingCalendar(true);
-    try {
-      // Get date range from activity
-      let startDate, endDate;
-      
-      if (activityData.selected_date || activityData.selectedDate) {
-        startDate = new Date(activityData.selected_date || activityData.selectedDate);
-        endDate = new Date(startDate);
-        endDate.setDate(endDate.getDate() + 1);
-      } else if (activityData.selected_days?.length > 0 || activityData.selectedDays?.length > 0) {
-        // Use a week range for flexible dates
-        startDate = new Date();
-        endDate = new Date();
-        endDate.setDate(endDate.getDate() + 7);
-      } else {
-        // Default to next week
-        startDate = new Date();
-        endDate = new Date();
-        endDate.setDate(endDate.getDate() + 7);
-      }
-      
-      const result = await apiService.getCalendarAvailability(
-        startDate.toISOString(),
-        endDate.toISOString()
-      );
-      
-      if (result.data?.integrated && result.data.availability) {
-        setCalendarAvailability(result.data.availability);
-        
-        // Update calendar suggestions based on real availability
-        if (result.data.availability.suggestions.length > 0) {
-          setCalendarSuggestions(result.data.availability.suggestions);
-          setAvailabilityNote(result.data.availability.suggestions[0]);
-        }
-      } else if (result.error) {
-        console.warn('Calendar availability error:', result.error);
-        // Don't show error to user for optional calendar features
-      }
-    } catch (error) {
-      console.error('Error loading calendar availability:', error);
-      // Calendar integration is optional, so we don't show errors to users
-    } finally {
-      setIsLoadingCalendar(false);
-    }
-  };
-
-  // Load calendar availability when activity is loaded
-  useEffect(() => {
-    if (activity && user?.google_calendar_integrated && !calendarAvailability) {
-      loadCalendarAvailability(activity);
-    }
-  }, [activity, user]);
-
-  const generateCalendarSuggestions = (activityData) => {
-    // Mock calendar integration - suggest optimal days
-    const suggestions = [
-      "Sunday afternoon looks completely free for you",
-      "Monday evening has a 2-hour window available",
-      "Your calendar shows Sunday as your best option"
-    ];
+    let startDate, endDate;
     
-    // Pick suggestion based on activity days
-    if (activityData.selectedDays && activityData.selectedDays.length > 0) {
-      const firstDay = activityData.selectedDays[0];
-      setCalendarSuggestions([`${firstDay} looks great in your calendar - no conflicts found!`]);
-      setAvailabilityNote(`${firstDay} works perfectly for me!`);
+    if (activity.selected_date || activity.selectedDate) {
+      startDate = new Date(activity.selected_date || activity.selectedDate);
+      endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + 1);
+    } else if (activity.selected_days?.length > 0 || activity.selectedDays?.length > 0) {
+      // Use a week range for flexible dates
+      startDate = new Date();
+      endDate = new Date();
+      endDate.setDate(endDate.getDate() + 7);
     } else {
-      setCalendarSuggestions(suggestions.slice(0, 1));
-      setAvailabilityNote("My calendar looks flexible for the suggested dates!");
+      // Default to next week
+      startDate = new Date();
+      endDate = new Date();
+      endDate.setDate(endDate.getDate() + 7);
     }
+    
+    return { startDate, endDate };
   };
+
+  const { startDate: calendarStartDate, endDate: calendarEndDate } = getCalendarDateRange();
+
+  // Use the calendar availability hook
+  const {
+    data: calendarData,
+    isLoading: isLoadingCalendar,
+    error: calendarError,
+    isIntegrated: isCalendarIntegrated
+  } = useCalendarAvailability({
+    startDate: calendarStartDate,
+    endDate: calendarEndDate,
+    detailed: true
+  });
+
+  // Extract calendar suggestions and set availability note
+  useEffect(() => {
+    if (calendarData?.availability?.suggestions?.length > 0) {
+      setAvailabilityNote(calendarData.availability.suggestions[0]);
+    } else if (calendarData?.detailed_availability?.suggestions?.length > 0) {
+      setAvailabilityNote(calendarData.detailed_availability.suggestions[0]);
+    }
+  }, [calendarData]);
 
   const handlePreferenceChange = (preference, checked) => {
     setPreferences(prev => ({
@@ -463,59 +433,147 @@ const InviteeResponse = () => {
                   </Card>
                 )}
 
-                {/* Calendar Suggestions */}
-                {!isLoadingCalendar && calendarSuggestions.length > 0 && !showCustomNote && (
-                  <Card className="border-green-200 bg-green-50">
-                    <CardContent className="pt-4">
-                      <div className="flex items-start gap-3">
-                        <CalendarCheck className="w-5 h-5 text-green-600 mt-0.5" />
-                        <div className="flex-1">
-                          <h4 className="font-medium text-green-900 mb-1">Calendar Suggestion</h4>
-                          <p className="text-green-700 text-sm mb-3">
-                            {calendarSuggestions[0]}
-                          </p>
-                          
-                          {/* Show additional calendar info if available */}
-                          {calendarAvailability && calendarAvailability.busy_slots.length > 0 && (
-                            <div className="mb-3">
-                              <p className="text-xs text-green-600 mb-1">Busy times to avoid:</p>
-                              <ul className="text-xs text-green-600 space-y-1">
-                                {calendarAvailability.busy_slots.slice(0, 2).map((slot, index) => (
-                                  <li key={index}>
-                                    {new Date(slot.start).toLocaleDateString()} {new Date(slot.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {new Date(slot.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}: {slot.title}
-                                  </li>
-                                ))}
-                              </ul>
+                {/* Enhanced Calendar Suggestions */}
+                {!isLoadingCalendar && (calendarData?.availability?.suggestions?.length > 0 || calendarData?.detailed_availability?.suggestions?.length > 0) && !showCustomNote && (
+                  <div className="space-y-4">
+                    <Card className="border-green-200 bg-green-50">
+                      <CardContent className="pt-4">
+                        <div className="flex items-start gap-3">
+                          <CalendarCheck className="w-5 h-5 text-green-600 mt-0.5" />
+                          <div className="flex-1">
+                            <div className="flex items-center justify-between mb-2">
+                              <h4 className="font-medium text-green-900">Smart Calendar Suggestion</h4>
+                              {calendarData?.detailed_availability && (
+                                <div className="flex items-center gap-1">
+                                  <div className={`w-2 h-2 rounded-full ${
+                                    calendarData.detailed_availability.availability_score >= 80 ? 'bg-green-500' :
+                                    calendarData.detailed_availability.availability_score >= 60 ? 'bg-yellow-500' :
+                                    'bg-red-500'
+                                  }`} />
+                                  <span className="text-xs text-green-600">
+                                    {calendarData.detailed_availability.availability_score}% available
+                                  </span>
+                                </div>
+                              )}
                             </div>
-                          )}
-                          
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              onClick={() => {/* Keep the suggestion */}}
-                              style={{ backgroundColor: '#1155cc', color: 'white' }}
-                            >
-                              Use This
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setShowCustomNote(true);
-                                setAvailabilityNote('');
-                              }}
-                            >
-                              Write Custom Note
-                            </Button>
+                            
+                            <p className="text-green-700 text-sm mb-3">
+                              {calendarData?.detailed_availability?.suggestions?.[0] || calendarData?.availability?.suggestions?.[0]}
+                            </p>
+                            
+                            {/* Show detailed analysis if available */}
+                            {calendarData?.detailed_availability && (
+                              <div className="space-y-2 mb-3">
+                                {calendarData.detailed_availability.analysis.recommended_times.length > 0 && (
+                                  <div>
+                                    <p className="text-xs text-green-600 mb-1">Best available slots:</p>
+                                    <ul className="text-xs text-green-600 space-y-1">
+                                      {calendarData.detailed_availability.analysis.recommended_times.slice(0, 2).map((time, index) => (
+                                        <li key={index} className="flex items-center gap-1">
+                                          <Clock className="w-3 h-3" />
+                                          {time}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                
+                                {calendarData.detailed_availability.analysis.busiest_day && (
+                                  <div className="p-2 bg-yellow-100 border border-yellow-200 rounded text-xs text-yellow-800">
+                                    ⚠️ {calendarData.detailed_availability.analysis.busiest_day} is your busiest day
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            
+                            {/* Show busy times */}
+                            {(calendarData?.availability?.busy_slots || calendarData?.detailed_availability?.busy_slots)?.length > 0 && (
+                              <div className="mb-3">
+                                <p className="text-xs text-green-600 mb-1">Times to avoid:</p>
+                                <ul className="text-xs text-green-600 space-y-1 max-h-20 overflow-y-auto">
+                                  {(calendarData?.availability?.busy_slots || calendarData?.detailed_availability?.busy_slots).slice(0, 3).map((slot, index) => (
+                                    <li key={index} className="flex items-center gap-1">
+                                      <X className="w-3 h-3 text-red-500" />
+                                      {new Date(slot.start).toLocaleDateString()} {new Date(slot.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {new Date(slot.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}: {slot.title}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => {/* Keep the suggestion */}}
+                                style={{ backgroundColor: '#1155cc', color: 'white' }}
+                              >
+                                Use This Suggestion
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setShowCustomNote(true);
+                                  setAvailabilityNote('');
+                                }}
+                              >
+                                Write Custom Note
+                              </Button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </CardContent>
-                  </Card>
+                      </CardContent>
+                    </Card>
+
+                    {/* Free Time Slots Preview */}
+                    {calendarData?.detailed_availability?.free_slots && calendarData.detailed_availability.free_slots.length > 0 && (
+                      <Card className="border-blue-200 bg-blue-50">
+                        <CardContent className="pt-4">
+                          <h4 className="font-medium text-blue-900 mb-2 flex items-center gap-2">
+                            <Clock className="w-4 h-4" />
+                            Your Available Time Slots
+                          </h4>
+                          <div className="grid gap-2">
+                            {calendarData.detailed_availability.free_slots.slice(0, 3).map((slot, index) => {
+                              const start = new Date(slot.start);
+                              const duration = slot.duration_hours;
+                              const typeColors = {
+                                'full_day': 'bg-green-100 border-green-300 text-green-800',
+                                'morning': 'bg-yellow-100 border-yellow-300 text-yellow-800',
+                                'evening': 'bg-purple-100 border-purple-300 text-purple-800',
+                                'between_events': 'bg-blue-100 border-blue-300 text-blue-800'
+                              };
+                              
+                              return (
+                                <div key={index} className={`p-2 rounded border text-xs ${typeColors[slot.type] || 'bg-gray-100 border-gray-300 text-gray-800'}`}>
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-medium">
+                                      {start.toLocaleDateString()} - {start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                    </span>
+                                    <span>
+                                      {duration >= 1 ? `${duration.toFixed(1)}h` : `${Math.round(duration * 60)}min`}
+                                    </span>
+                                  </div>
+                                  <div className="opacity-75 capitalize">
+                                    {slot.type.replace('_', ' ')} slot
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {calendarData.detailed_availability.free_slots.length > 3 && (
+                              <div className="text-xs text-blue-600 text-center py-1">
+                                +{calendarData.detailed_availability.free_slots.length - 3} more slots available
+                              </div>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
                 )}
 
                 {/* Custom Availability Note for Calendar Users */}
-                {(showCustomNote || (!isLoadingCalendar && calendarSuggestions.length === 0)) && (
+                {(showCustomNote || (!isLoadingCalendar && !calendarData?.availability?.suggestions?.length && !calendarData?.detailed_availability?.suggestions?.length)) && (
                   <div className="space-y-2">
                     <Label htmlFor="availability">Your Availability</Label>
                     <Textarea

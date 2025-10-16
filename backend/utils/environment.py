@@ -1,5 +1,10 @@
 import os
-from typing import Optional
+import asyncio
+from typing import Optional, Dict
+from motor.motor_asyncio import AsyncIOMotorClient
+from cryptography.fernet import Fernet
+import base64
+import hashlib
 
 
 def is_local_development() -> bool:
@@ -83,3 +88,105 @@ def get_signup_link(invitation_token: Optional[str] = None) -> str:
         signup_path += f"?token={invitation_token}"
     
     return f"{base_url}{signup_path}"
+
+
+class SecretsLoader:
+    """Utility class for loading secrets from MongoDB."""
+    
+    def __init__(self):
+        self.encryption_key = self._get_encryption_key()
+        self.cipher = Fernet(self.encryption_key) if self.encryption_key else None
+        
+    def _get_encryption_key(self) -> Optional[bytes]:
+        """Get encryption key for secrets."""
+        try:
+            # Try to get key from environment first
+            key_env = os.getenv("SECRETS_ENCRYPTION_KEY")
+            if key_env:
+                return base64.urlsafe_b64decode(key_env.encode())
+            
+            # Generate key from a combination of environment variables
+            # This ensures the same key is generated consistently
+            seed_data = (
+                os.getenv("MONGODB_URI", "") +
+                os.getenv("DATABASE_NAME", "sunnyside") +
+                "sunnyside_secrets_key"
+            )
+            
+            # Create a deterministic key from the seed
+            key_hash = hashlib.sha256(seed_data.encode()).digest()
+            return base64.urlsafe_b64encode(key_hash)
+        except Exception:
+            return None
+    
+    def _decrypt_value(self, encrypted_value: str) -> str:
+        """Decrypt a secret value."""
+        if not self.cipher:
+            raise ValueError("Encryption key not available")
+        return self.cipher.decrypt(encrypted_value.encode()).decode()
+    
+    async def load_secrets_from_db(self, mongodb_client: AsyncIOMotorClient,
+                                 database_name: str, environment: str = None) -> Dict[str, str]:
+        """Load secrets from MongoDB and return as dictionary."""
+        secrets = {}
+        
+        if not mongodb_client:
+            print("⚠ MongoDB client not available, skipping secrets loading")
+            return secrets
+        
+        try:
+            # Determine environment
+            if not environment:
+                environment = os.getenv("ENVIRONMENT", "development").lower()
+                if environment not in ["development", "production", "staging"]:
+                    environment = "development"
+            
+            # Get database and collection
+            db = mongodb_client[database_name]
+            collection = db.secrets
+            
+            # Fetch secrets for the environment
+            cursor = collection.find({"environment": environment})
+            documents = await cursor.to_list(length=None)
+            
+            # Decrypt and load secrets
+            for doc in documents:
+                try:
+                    key = doc.get("key")
+                    encrypted_value = doc.get("value")
+                    
+                    if key and encrypted_value:
+                        decrypted_value = self._decrypt_value(encrypted_value)
+                        secrets[key] = decrypted_value
+                        
+                except Exception as e:
+                    print(f"⚠ Failed to decrypt secret '{key}': {e}")
+                    continue
+            
+            if secrets:
+                print(f"✓ Loaded {len(secrets)} secrets from MongoDB for environment '{environment}'")
+            else:
+                print(f"ℹ No secrets found in MongoDB for environment '{environment}'")
+                
+        except Exception as e:
+            print(f"⚠ Failed to load secrets from MongoDB: {e}")
+        
+        return secrets
+
+
+async def load_secrets_from_mongodb(mongodb_client: AsyncIOMotorClient,
+                                  database_name: str, environment: str = None) -> None:
+    """
+    Load secrets from MongoDB and set them as environment variables.
+    
+    Args:
+        mongodb_client: MongoDB client instance
+        database_name: Name of the database
+        environment: Environment to load secrets for (defaults to ENVIRONMENT env var)
+    """
+    loader = SecretsLoader()
+    secrets = await loader.load_secrets_from_db(mongodb_client, database_name, environment)
+    
+    # Set secrets as environment variables
+    for key, value in secrets.items():
+        os.environ[key] = value

@@ -4,8 +4,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+from backend.utils.environment import load_secrets_from_mongodb
+from backend.dependencies import set_database_for_dependencies
 
-# Load environment variables
+# Load environment variables from .env file first
 load_dotenv()
 
 # MongoDB connection
@@ -32,6 +34,13 @@ async def lifespan(app: FastAPI):
     try:
         await mongodb_client.admin.command('ping')
         print("Successfully connected to MongoDB Atlas!")
+        
+        # Load secrets from MongoDB
+        await load_secrets_from_mongodb(mongodb_client, DATABASE_NAME)
+        
+        # Set the database for the dependency injector
+        set_database_for_dependencies(database)
+        
     except Exception as e:
         print(f"Failed to connect to MongoDB: {e}")
     
@@ -77,11 +86,6 @@ async def health_check():
         "status": "ok",
         "db_status": db_status
     }
-
-
-def get_database_connection():
-    """Get the database connection."""
-    return database
 
 
 # API v1 router

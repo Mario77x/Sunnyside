@@ -1,7 +1,7 @@
 import os
 import json
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 # Optional Google Calendar imports
@@ -154,8 +154,8 @@ class GoogleCalendarService:
             service = build('calendar', 'v3', credentials=credentials)
             
             # Convert dates to RFC3339 format
-            time_min = start_date.isoformat() + 'Z'
-            time_max = end_date.isoformat() + 'Z'
+            time_min = start_date.replace(tzinfo=timezone.utc).isoformat()
+            time_max = end_date.replace(tzinfo=timezone.utc).isoformat()
             
             events_result = service.events().list(
                 calendarId='primary',
@@ -219,7 +219,7 @@ class GoogleCalendarService:
             raise
     
     def _generate_availability_suggestions(self, busy_slots: List[Dict[str, Any]], start_date: datetime, end_date: datetime) -> List[str]:
-        """Generate availability suggestions based on busy slots."""
+        """Generate intelligent availability suggestions based on busy slots."""
         suggestions = []
         
         # Simple logic to find free time slots
@@ -228,6 +228,7 @@ class GoogleCalendarService:
         
         while current_date <= end_date_only:
             day_name = current_date.strftime('%A')
+            date_str = current_date.strftime('%B %d')
             
             # Check if there are any events on this day
             day_events = [
@@ -236,24 +237,209 @@ class GoogleCalendarService:
             ]
             
             if not day_events:
-                suggestions.append(f"{day_name} looks completely free for you")
+                suggestions.append(f"{day_name} ({date_str}) looks completely free for you")
             elif len(day_events) == 1:
                 # Check for gaps
                 event_start = datetime.fromisoformat(day_events[0]['start'].replace('Z', '+00:00'))
                 event_end = datetime.fromisoformat(day_events[0]['end'].replace('Z', '+00:00'))
                 
                 if event_start.hour > 10:  # Morning free
-                    suggestions.append(f"{day_name} morning is available before {event_start.strftime('%I:%M %p')}")
+                    suggestions.append(f"{day_name} ({date_str}) morning is available before {event_start.strftime('%I:%M %p')}")
                 elif event_end.hour < 18:  # Evening free
-                    suggestions.append(f"{day_name} evening is available after {event_end.strftime('%I:%M %p')}")
+                    suggestions.append(f"{day_name} ({date_str}) evening is available after {event_end.strftime('%I:%M %p')}")
+                else:
+                    # Check for lunch break or gaps between events
+                    suggestions.append(f"{day_name} ({date_str}) has some availability around your existing event")
+            elif len(day_events) > 1:
+                # Multiple events - look for gaps
+                sorted_events = sorted(day_events, key=lambda x: x['start'])
+                for i in range(len(sorted_events) - 1):
+                    current_end = datetime.fromisoformat(sorted_events[i]['end'].replace('Z', '+00:00'))
+                    next_start = datetime.fromisoformat(sorted_events[i + 1]['start'].replace('Z', '+00:00'))
+                    gap_hours = (next_start - current_end).total_seconds() / 3600
+                    
+                    if gap_hours >= 2:  # At least 2 hour gap
+                        suggestions.append(f"{day_name} ({date_str}) has a {int(gap_hours)}-hour window from {current_end.strftime('%I:%M %p')} to {next_start.strftime('%I:%M %p')}")
+                        break
             
             current_date += timedelta(days=1)
         
         # If no specific suggestions, provide general ones
         if not suggestions:
             suggestions.append("Your calendar shows some flexibility in the selected dates")
+            # Add more helpful fallback suggestions
+            suggestions.append("Consider weekends or evenings for better availability")
         
         return suggestions[:3]  # Return top 3 suggestions
+    
+    def get_detailed_availability(self, credentials_dict: Dict[str, Any], start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        """Get detailed availability with time slots and conflict analysis."""
+        try:
+            events = self.get_calendar_events(credentials_dict, start_date, end_date)
+            
+            # Process events to determine busy time slots
+            busy_slots = []
+            free_slots = []
+            
+            for event in events:
+                if not event['all_day']:  # Skip all-day events for availability calculation
+                    busy_slots.append({
+                        'start': event['start'],
+                        'end': event['end'],
+                        'title': event['summary'],
+                        'duration_hours': self._calculate_duration_hours(event['start'], event['end'])
+                    })
+            
+            # Generate free time slots
+            free_slots = self._generate_free_slots(busy_slots, start_date, end_date)
+            
+            # Generate intelligent suggestions
+            suggestions = self._generate_availability_suggestions(busy_slots, start_date, end_date)
+            
+            # Calculate availability score (0-100)
+            availability_score = self._calculate_availability_score(busy_slots, start_date, end_date)
+            
+            return {
+                'busy_slots': busy_slots,
+                'free_slots': free_slots,
+                'suggestions': suggestions,
+                'availability_score': availability_score,
+                'date_range': {
+                    'start': start_date.isoformat(),
+                    'end': end_date.isoformat()
+                },
+                'analysis': {
+                    'total_busy_hours': sum(slot['duration_hours'] for slot in busy_slots),
+                    'busiest_day': self._find_busiest_day(busy_slots),
+                    'recommended_times': self._get_recommended_times(free_slots)
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error getting detailed availability: {str(e)}")
+            raise
+    
+    def _calculate_duration_hours(self, start_str: str, end_str: str) -> float:
+        """Calculate duration in hours between two datetime strings."""
+        start = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+        end = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
+        return (end - start).total_seconds() / 3600
+    
+    def _generate_free_slots(self, busy_slots: List[Dict[str, Any]], start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
+        """Generate free time slots based on busy periods."""
+        free_slots = []
+        current_date = start_date.date()
+        end_date_only = end_date.date()
+        
+        while current_date <= end_date_only:
+            # Define working hours (9 AM to 6 PM)
+            day_start = datetime.combine(current_date, datetime.min.time().replace(hour=9))
+            day_end = datetime.combine(current_date, datetime.min.time().replace(hour=18))
+            
+            # Get events for this day
+            day_events = [
+                slot for slot in busy_slots
+                if datetime.fromisoformat(slot['start'].replace('Z', '+00:00')).date() == current_date
+            ]
+            
+            if not day_events:
+                # Entire day is free
+                free_slots.append({
+                    'start': day_start.isoformat(),
+                    'end': day_end.isoformat(),
+                    'duration_hours': 9,
+                    'type': 'full_day'
+                })
+            else:
+                # Find gaps between events
+                sorted_events = sorted(day_events, key=lambda x: x['start'])
+                
+                # Check morning slot
+                first_event_start = datetime.fromisoformat(sorted_events[0]['start'].replace('Z', '+00:00'))
+                if first_event_start > day_start:
+                    duration = (first_event_start - day_start).total_seconds() / 3600
+                    if duration >= 1:  # At least 1 hour
+                        free_slots.append({
+                            'start': day_start.isoformat(),
+                            'end': first_event_start.isoformat(),
+                            'duration_hours': duration,
+                            'type': 'morning'
+                        })
+                
+                # Check gaps between events
+                for i in range(len(sorted_events) - 1):
+                    current_end = datetime.fromisoformat(sorted_events[i]['end'].replace('Z', '+00:00'))
+                    next_start = datetime.fromisoformat(sorted_events[i + 1]['start'].replace('Z', '+00:00'))
+                    duration = (next_start - current_end).total_seconds() / 3600
+                    
+                    if duration >= 1:  # At least 1 hour gap
+                        free_slots.append({
+                            'start': current_end.isoformat(),
+                            'end': next_start.isoformat(),
+                            'duration_hours': duration,
+                            'type': 'between_events'
+                        })
+                
+                # Check evening slot
+                last_event_end = datetime.fromisoformat(sorted_events[-1]['end'].replace('Z', '+00:00'))
+                if last_event_end < day_end:
+                    duration = (day_end - last_event_end).total_seconds() / 3600
+                    if duration >= 1:  # At least 1 hour
+                        free_slots.append({
+                            'start': last_event_end.isoformat(),
+                            'end': day_end.isoformat(),
+                            'duration_hours': duration,
+                            'type': 'evening'
+                        })
+            
+            current_date += timedelta(days=1)
+        
+        return free_slots
+    
+    def _calculate_availability_score(self, busy_slots: List[Dict[str, Any]], start_date: datetime, end_date: datetime) -> int:
+        """Calculate availability score from 0-100."""
+        total_hours = (end_date - start_date).total_seconds() / 3600
+        busy_hours = sum(slot['duration_hours'] for slot in busy_slots)
+        
+        # Assume 9 working hours per day
+        working_days = (end_date.date() - start_date.date()).days + 1
+        total_working_hours = working_days * 9
+        
+        if total_working_hours == 0:
+            return 100
+        
+        availability_ratio = max(0, (total_working_hours - busy_hours) / total_working_hours)
+        return int(availability_ratio * 100)
+    
+    def _find_busiest_day(self, busy_slots: List[Dict[str, Any]]) -> Optional[str]:
+        """Find the busiest day in the date range."""
+        if not busy_slots:
+            return None
+        
+        day_hours = {}
+        for slot in busy_slots:
+            date = datetime.fromisoformat(slot['start'].replace('Z', '+00:00')).date()
+            day_name = date.strftime('%A, %B %d')
+            day_hours[day_name] = day_hours.get(day_name, 0) + slot['duration_hours']
+        
+        return max(day_hours, key=day_hours.get) if day_hours else None
+    
+    def _get_recommended_times(self, free_slots: List[Dict[str, Any]]) -> List[str]:
+        """Get recommended time slots for activities."""
+        recommendations = []
+        
+        # Sort by duration (longest first)
+        sorted_slots = sorted(free_slots, key=lambda x: x['duration_hours'], reverse=True)
+        
+        for slot in sorted_slots[:3]:  # Top 3 longest slots
+            start = datetime.fromisoformat(slot['start'])
+            duration = slot['duration_hours']
+            
+            if duration >= 3:
+                recommendations.append(f"{start.strftime('%A %I:%M %p')} - {duration:.1f} hours available")
+            elif duration >= 1:
+                recommendations.append(f"{start.strftime('%A %I:%M %p')} - {duration:.1f} hour window")
+        
+        return recommendations
 
 # Global instance
 google_calendar_service = GoogleCalendarService()

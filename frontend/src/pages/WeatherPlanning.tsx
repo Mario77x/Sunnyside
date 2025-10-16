@@ -6,12 +6,13 @@ import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Cloud, Sun, CloudRain, Calendar as CalendarIcon, ThumbsUp, AlertTriangle, Info, Users, Loader2, CloudSnow, Zap, Eye, CloudDrizzle, Clock } from 'lucide-react';
+import { ArrowLeft, Cloud, Sun, CloudRain, Calendar as CalendarIcon, ThumbsUp, AlertTriangle, Info, Users, Loader2, CloudSnow, Zap, Eye, CloudDrizzle, Clock, X } from 'lucide-react';
 import { format, addHours, addDays } from 'date-fns';
 import { calculateDeadline, getDeadlineText, getDeadlineStatus } from '@/utils/deadlineCalculator';
 import { showError, showSuccess } from '@/utils/toast';
 import ThinkingScreen from '@/components/ThinkingScreen';
 import { apiService } from '@/services/api';
+import { useCalendarAvailability } from '@/hooks/useCalendarAvailability';
 
 const WeatherPlanning = () => {
   const navigate = useNavigate();
@@ -28,8 +29,6 @@ const WeatherPlanning = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deadline, setDeadline] = useState(null);
   const [useCustomDeadline, setUseCustomDeadline] = useState(false);
-  const [calendarAvailability, setCalendarAvailability] = useState(null);
-  const [isLoadingCalendar, setIsLoadingCalendar] = useState(false);
 
   useEffect(() => {
     if (location.state?.activity) {
@@ -85,40 +84,24 @@ const WeatherPlanning = () => {
     }
   };
 
-  const loadCalendarAvailability = async () => {
-    if (!selectedDate) return;
-    
-    setIsLoadingCalendar(true);
-    try {
-      const startDate = new Date(selectedDate);
-      const endDate = new Date(selectedDate);
-      endDate.setDate(endDate.getDate() + 7); // Check 7 days from selected date
-      
-      const result = await apiService.getCalendarAvailability(
-        startDate.toISOString(),
-        endDate.toISOString()
-      );
-      
-      if (result.data) {
-        setCalendarAvailability(result.data);
-      } else if (result.error) {
-        console.warn('Calendar availability error:', result.error);
-        // Don't show error to user, just fail silently for calendar features
-      }
-    } catch (error) {
-      console.error('Error loading calendar availability:', error);
-      // Calendar integration is optional, so we don't show errors to users
-    } finally {
-      setIsLoadingCalendar(false);
-    }
-  };
+  // Use the calendar availability hook
+  const calendarStartDate = selectedDate ? new Date(selectedDate) : undefined;
+  const calendarEndDate = selectedDate ? (() => {
+    const end = new Date(selectedDate);
+    end.setDate(end.getDate() + 7); // Check 7 days from selected date
+    return end;
+  })() : undefined;
 
-  // Load calendar availability when date is selected
-  useEffect(() => {
-    if (selectedDate) {
-      loadCalendarAvailability();
-    }
-  }, [selectedDate]);
+  const {
+    data: calendarData,
+    isLoading: isLoadingCalendar,
+    error: calendarError,
+    isIntegrated: isCalendarIntegrated
+  } = useCalendarAvailability({
+    startDate: calendarStartDate,
+    endDate: calendarEndDate,
+    detailed: true
+  });
 
   const getConditionFromWeatherCode = (code) => {
     if (code === 0) return 'sunny';
@@ -261,7 +244,7 @@ const WeatherPlanning = () => {
   };
 
   const renderCalendarAvailability = () => {
-    if (!calendarAvailability || !calendarAvailability.integrated) {
+    if (!isCalendarIntegrated) {
       return null;
     }
 
@@ -278,51 +261,165 @@ const WeatherPlanning = () => {
       );
     }
 
-    const { availability } = calendarAvailability;
-    if (!availability) return null;
+    const availability = calendarData?.availability;
+    const detailed = calendarData?.detailed_availability;
+    
+    if (!availability && !detailed) return null;
 
     return (
-      <Card className="border-green-200 bg-green-50">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-green-800">
-            <CalendarIcon className="w-5 h-5" />
-            Your Calendar Availability
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {availability.suggestions.length > 0 && (
-            <div className="space-y-2">
-              <h4 className="font-medium text-green-900">Suggested times:</h4>
-              <ul className="space-y-1">
-                {availability.suggestions.map((suggestion, index) => (
-                  <li key={index} className="text-sm text-green-700 flex items-center gap-2">
-                    <ThumbsUp className="w-3 h-3" />
-                    {suggestion}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          
-          {availability.busy_slots.length > 0 && (
-            <div className="mt-4 space-y-2">
-              <h4 className="font-medium text-green-900">Busy times to avoid:</h4>
-              <ul className="space-y-1">
-                {availability.busy_slots.slice(0, 3).map((slot, index) => (
-                  <li key={index} className="text-sm text-green-700">
-                    {new Date(slot.start).toLocaleDateString()} {new Date(slot.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {new Date(slot.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}: {slot.title}
-                  </li>
-                ))}
-                {availability.busy_slots.length > 3 && (
-                  <li className="text-xs text-green-600">
-                    +{availability.busy_slots.length - 3} more events
-                  </li>
+      <div className="space-y-4">
+        {/* Availability Score and Overview */}
+        {detailed && (
+          <Card className="border-green-200 bg-green-50">
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between text-green-800">
+                <div className="flex items-center gap-2">
+                  <CalendarIcon className="w-5 h-5" />
+                  Your Calendar Availability
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="text-sm font-medium">
+                    {detailed.availability_score}% Available
+                  </div>
+                  <div className={`w-3 h-3 rounded-full ${
+                    detailed.availability_score >= 80 ? 'bg-green-500' :
+                    detailed.availability_score >= 60 ? 'bg-yellow-500' :
+                    'bg-red-500'
+                  }`} />
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Quick Stats */}
+              <div className="grid grid-cols-2 gap-4 p-3 bg-white rounded-lg">
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-green-900">
+                    {detailed.analysis.total_busy_hours.toFixed(1)}h
+                  </div>
+                  <div className="text-xs text-green-600">Total Busy Time</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-green-900">
+                    {detailed.free_slots.length}
+                  </div>
+                  <div className="text-xs text-green-600">Free Time Slots</div>
+                </div>
+              </div>
+
+              {/* Suggestions */}
+              {(availability?.suggestions || detailed.suggestions).length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="font-medium text-green-900">Best Times for Your Activity:</h4>
+                  <ul className="space-y-1">
+                    {(availability?.suggestions || detailed.suggestions).map((suggestion, index) => (
+                      <li key={index} className="text-sm text-green-700 flex items-center gap-2">
+                        <ThumbsUp className="w-3 h-3" />
+                        {suggestion}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Recommended Times from Analysis */}
+              {detailed.analysis.recommended_times.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="font-medium text-green-900">Longest Available Slots:</h4>
+                  <ul className="space-y-1">
+                    {detailed.analysis.recommended_times.map((time, index) => (
+                      <li key={index} className="text-sm text-green-700 flex items-center gap-2">
+                        <Clock className="w-3 h-3" />
+                        {time}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Busiest Day Warning */}
+              {detailed.analysis.busiest_day && (
+                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <div className="flex items-center gap-2 text-yellow-800">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span className="text-sm font-medium">
+                      {detailed.analysis.busiest_day} is your busiest day
+                    </span>
+                  </div>
+                </div>
+              )}
+              
+              {/* Busy Times */}
+              {(availability?.busy_slots || detailed.busy_slots).length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="font-medium text-green-900">Times to Avoid:</h4>
+                  <ul className="space-y-1 max-h-32 overflow-y-auto">
+                    {(availability?.busy_slots || detailed.busy_slots).slice(0, 5).map((slot, index) => (
+                      <li key={index} className="text-sm text-green-700 flex items-center gap-2">
+                        <X className="w-3 h-3 text-red-500" />
+                        <span>
+                          {new Date(slot.start).toLocaleDateString()} {new Date(slot.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {new Date(slot.end).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}: {slot.title}
+                        </span>
+                      </li>
+                    ))}
+                    {(availability?.busy_slots || detailed.busy_slots).length > 5 && (
+                      <li className="text-xs text-green-600 ml-5">
+                        +{(availability?.busy_slots || detailed.busy_slots).length - 5} more events
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Free Time Slots Visualization */}
+        {detailed?.free_slots && detailed.free_slots.length > 0 && (
+          <Card className="border-blue-200 bg-blue-50">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-blue-800">
+                <Clock className="w-5 h-5" />
+                Available Time Slots
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-2">
+                {detailed.free_slots.slice(0, 6).map((slot, index) => {
+                  const start = new Date(slot.start);
+                  const duration = slot.duration_hours;
+                  const typeColors = {
+                    'full_day': 'bg-green-100 border-green-300 text-green-800',
+                    'morning': 'bg-yellow-100 border-yellow-300 text-yellow-800',
+                    'evening': 'bg-purple-100 border-purple-300 text-purple-800',
+                    'between_events': 'bg-blue-100 border-blue-300 text-blue-800'
+                  };
+                  
+                  return (
+                    <div key={index} className={`p-2 rounded border ${typeColors[slot.type] || 'bg-gray-100 border-gray-300 text-gray-800'}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium">
+                          {start.toLocaleDateString()} - {start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </div>
+                        <div className="text-xs">
+                          {duration >= 1 ? `${duration.toFixed(1)}h` : `${Math.round(duration * 60)}min`}
+                        </div>
+                      </div>
+                      <div className="text-xs opacity-75 capitalize">
+                        {slot.type.replace('_', ' ')} slot
+                      </div>
+                    </div>
+                  );
+                })}
+                {detailed.free_slots.length > 6 && (
+                  <div className="text-xs text-blue-600 text-center py-2">
+                    +{detailed.free_slots.length - 6} more available slots
+                  </div>
                 )}
-              </ul>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
     );
   };
 

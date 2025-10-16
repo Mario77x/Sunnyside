@@ -1,0 +1,89 @@
+{
+  "summary": {
+    "total_services": 4,
+    "operational_services": 4,
+    "success_rate": "100.0%",
+    "production_ready": true
+  },
+  "services": {
+    "emailjs": {
+      "service": "EmailJS Email",
+      "tests": {
+        "credentials_check": {
+          "status": "PASS",
+          "details": "All EmailJS credentials present"
+        },
+        "api_simulation": {
+          "status": "PASS",
+          "details": "EmailJS API call simulated successfully with template template_du748ku"
+        },
+        "template_availability": {
+          "status": "PASS",
+          "details": {
+            "welcome": "AVAILABLE",
+            "password_reset": "AVAILABLE",
+            "activity_invitation": "AVAILABLE",
+            "activity_response": "AVAILABLE",
+            "activity_cancellation": "AVAILABLE",
+            "upcoming_reminder": "AVAILABLE",
+            "contact_request": "AVAILABLE",
+            "contact_accepted": "AVAILABLE"
+          }
+        }
+      },
+      "overall_status": "PASS"
+    },
+    "twilio_sms": {
+      "service": "Twilio SMS",
+      "tests": {
+        "credentials_check": {
+          "status": "PASS",
+          "details": "All Twilio credentials present"
+        },
+        "client_validation": {
+          "status": "PASS",
+          "details": "Account validated: Sunnyside_MVP"
+        },
+        "sms_simulation": {
+          "status": "PASS",
+          "details": "SMS simulation successful from +15672298852"
+        }
+      },
+      "overall_status": "PASS"
+    },
+    "twilio_whatsapp": {
+      "service": "Twilio WhatsApp",
+      "tests": {
+        "credentials_check": {
+          "status": "PASS",
+          "details": "WhatsApp number configured: +14155238886"
+        },
+        "whatsapp_simulation": {
+          "status": "PASS",
+          "details": "WhatsApp simulation successful from +14155238886"
+        }
+      },
+      "overall_status": "PASS"
+    },
+    "mistral_ai": {
+      "service": "Mistral AI",
+      "tests": {
+        "service_initialization": {
+          "status": "PASS",
+          "details": "LLMService initialized successfully"
+        },
+        "intent_parsing": {
+          "status": "PASS",
+          "details": "Successfully parsed activity: outdoor_sports"
+        },
+        "recommendations": {
+          "status": "PASS",
+          "details": "Generated 1 recommendations"
+        }
+      },
+      "overall_status": "PASS"
+    }
+  },
+  "credentials_count": 26,
+  "test_date": "2025-10-16T15:17:37.121959"
+}

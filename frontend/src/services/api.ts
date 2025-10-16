@@ -42,6 +42,34 @@ export interface ActivitySuggestion {
   isCustom?: boolean;
 }
 
+export interface SmartSchedulingSuggestion {
+  start: string;
+  end: string;
+  duration_hours: number;
+  time_of_day: string;
+  score: number;
+  reasoning: string;
+  key_factors: string[];
+  considerations?: string;
+  confidence_score: number;
+  score_breakdown?: {
+    availability: number;
+    weather: number;
+    time_preference: number;
+    day_preference: number;
+  };
+}
+
+export interface SmartSchedulingResponse {
+  success: boolean;
+  suggestions: SmartSchedulingSuggestion[];
+  participants_analyzed: number;
+  calendar_data_available: number;
+  weather_considered: boolean;
+  metadata: Record<string, any>;
+  error?: string;
+}
+
 export interface Activity {
   id: string;
   organizer_id: string;
@@ -847,6 +875,47 @@ class ApiService {
     return this.handleResponse(response);
   }
 
+  async getDetailedCalendarAvailability(startDate: string, endDate: string): Promise<ApiResponse<{
+    integrated: boolean;
+    detailed_availability?: {
+      busy_slots: Array<{
+        start: string;
+        end: string;
+        title: string;
+        duration_hours: number;
+      }>;
+      free_slots: Array<{
+        start: string;
+        end: string;
+        duration_hours: number;
+        type: string;
+      }>;
+      suggestions: string[];
+      availability_score: number;
+      date_range: {
+        start: string;
+        end: string;
+      };
+      analysis: {
+        total_busy_hours: number;
+        busiest_day: string | null;
+        recommended_times: string[];
+      };
+    };
+    message?: string;
+  }>> {
+    const params = new URLSearchParams({
+      start_date: startDate,
+      end_date: endDate
+    });
+    
+    const response = await fetch(`${API_BASE_URL}/api/v1/calendar/detailed-availability?${params}`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse(response);
+  }
+
   async disconnectGoogleCalendar(): Promise<ApiResponse<{ message: string }>> {
     const response = await fetch(`${API_BASE_URL}/api/v1/calendar/integration`, {
       method: 'DELETE',
@@ -854,6 +923,41 @@ class ApiService {
     });
     
     return this.handleResponse<{ message: string }>(response);
+  }
+
+  // Smart Scheduling endpoint
+  async getSmartSchedulingSuggestions(requestData: {
+    activity: {
+      title: string;
+      activity_type?: string;
+      weather_preference?: string;
+      [key: string]: any;
+    };
+    participants: Array<{
+      id?: string;
+      name: string;
+      email: string;
+      google_calendar_credentials?: any;
+    }>;
+    date_range_days?: number;
+    max_suggestions?: number;
+  }): Promise<ApiResponse<SmartSchedulingResponse>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/llm/smart-scheduling`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(requestData)
+    });
+    
+    return this.handleResponse<SmartSchedulingResponse>(response);
+  }
+
+  async testSmartScheduling(): Promise<ApiResponse<SmartSchedulingResponse>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/llm/test-smart-scheduling`, {
+      method: 'POST',
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<SmartSchedulingResponse>(response);
   }
 }
 

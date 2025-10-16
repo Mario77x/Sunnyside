@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List
 from ..services.llm import llm_service
-from ..services.risk_assessment import risk_assessment_service
+from ..services.risk_assessment import get_risk_assessment_service
+from ..services.smart_scheduling import smart_scheduling_service
 
 router = APIRouter(prefix="/llm", tags=["llm"])
 
@@ -59,6 +60,34 @@ class GenerateSuggestionsRequest(BaseModel):
                 "date": "2024-01-20",
                 "indoor_outdoor_preference": "outdoor",
                 "group_size": 4
+            }
+        }
+
+class SmartSchedulingRequest(BaseModel):
+    """Request model for smart scheduling suggestions."""
+    activity: Dict[str, Any] = Field(..., description="Activity details including title, type, weather preference")
+    participants: List[Dict[str, Any]] = Field(..., description="List of participants with optional calendar credentials")
+    date_range_days: int = Field(default=14, description="Number of days to look ahead for scheduling", ge=1, le=30)
+    max_suggestions: int = Field(default=5, description="Maximum number of time suggestions to return", ge=1, le=10)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "activity": {
+                    "title": "Team Dinner",
+                    "activity_type": "dining",
+                    "weather_preference": "indoor"
+                },
+                "participants": [
+                    {
+                        "id": "user123",
+                        "name": "John Doe",
+                        "email": "john@example.com",
+                        "google_calendar_credentials": None
+                    }
+                ],
+                "date_range_days": 14,
+                "max_suggestions": 5
             }
         }
 
@@ -177,6 +206,45 @@ class GenerateSuggestionsResponse(BaseModel):
                     "model_used": "mistral-small-latest",
                     "generated_at": "2024-01-14T10:30:00",
                     "processing_version": "1.0"
+                },
+                "error": None
+            }
+        }
+
+class SmartSchedulingResponse(BaseModel):
+    """Response model for smart scheduling suggestions."""
+    success: bool
+    suggestions: List[Dict[str, Any]] = Field(default_factory=list)
+    participants_analyzed: int = 0
+    calendar_data_available: int = 0
+    weather_considered: bool = False
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "suggestions": [
+                    {
+                        "start": "2024-01-20T18:00:00",
+                        "end": "2024-01-20T20:00:00",
+                        "duration_hours": 2,
+                        "time_of_day": "evening",
+                        "score": 85.5,
+                        "reasoning": "Optimal time based on participant availability and activity type",
+                        "key_factors": ["Calendar availability", "Evening convenience", "Weekend timing"],
+                        "considerations": "Consider making reservations in advance",
+                        "confidence_score": 0.85
+                    }
+                ],
+                "participants_analyzed": 4,
+                "calendar_data_available": 2,
+                "weather_considered": False,
+                "metadata": {
+                    "generated_at": "2024-01-14T10:30:00",
+                    "date_range_days": 14,
+                    "service_version": "1.0"
                 },
                 "error": None
             }
@@ -478,7 +546,8 @@ async def assess_risk(request: RiskAssessmentRequest) -> RiskAssessmentResponse:
             )
         
         # Perform risk assessment
-        assessment = await risk_assessment_service.analyze_text(request.text.strip())
+        risk_service = get_risk_assessment_service()
+        assessment = await risk_service.analyze_text(request.text.strip())
         
         # Return the assessment results
         return RiskAssessmentResponse(
@@ -578,7 +647,8 @@ async def test_risk_assessment():
     
     for test_case in test_cases:
         try:
-            assessment = await risk_assessment_service.analyze_text(test_case["text"])
+            risk_service = get_risk_assessment_service()
+            assessment = await risk_service.analyze_text(test_case["text"])
             results[test_case["name"]] = {
                 "input": test_case["text"],
                 "assessment": assessment
@@ -593,3 +663,127 @@ async def test_risk_assessment():
         "test_results": results,
         "service_status": "operational"
     }
+
+@router.post("/smart-scheduling", response_model=SmartSchedulingResponse)
+async def get_smart_scheduling_suggestions(request: SmartSchedulingRequest) -> SmartSchedulingResponse:
+    """
+    Generate smart scheduling suggestions for activities based on participant availability.
+    
+    This endpoint analyzes participant calendars, weather conditions, and activity requirements
+    to suggest optimal times for scheduling activities. It uses AI to provide reasoning for
+    each suggestion and considers multiple factors:
+    
+    - Participant calendar availability (when Google Calendar is integrated)
+    - Weather conditions for outdoor activities
+    - Activity type preferences (dining, sports, social, etc.)
+    - Day of week and time of day preferences
+    - Conflict detection and resolution
+    
+    Args:
+        request: SmartSchedulingRequest containing activity and participant details
+        
+    Returns:
+        SmartSchedulingResponse with optimal time suggestions and reasoning
+        
+    Raises:
+        HTTPException: If the request is invalid or processing fails
+    """
+    try:
+        # Validate input
+        if not request.activity:
+            raise HTTPException(
+                status_code=400,
+                detail="Activity details are required"
+            )
+        
+        if not request.participants:
+            raise HTTPException(
+                status_code=400,
+                detail="At least one participant is required"
+            )
+        
+        # Generate smart scheduling suggestions
+        result = await smart_scheduling_service.suggest_optimal_times(
+            activity=request.activity,
+            participants=request.participants,
+            date_range_days=request.date_range_days,
+            max_suggestions=request.max_suggestions
+        )
+        
+        # Return the result
+        return SmartSchedulingResponse(
+            success=result.get("success", False),
+            suggestions=result.get("suggestions", []),
+            participants_analyzed=result.get("participants_analyzed", 0),
+            calendar_data_available=result.get("calendar_data_available", 0),
+            weather_considered=result.get("weather_considered", False),
+            metadata=result.get("metadata", {}),
+            error=result.get("error")
+        )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Handle unexpected errors
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error while generating scheduling suggestions: {str(e)}"
+        )
+
+@router.post("/test-smart-scheduling")
+async def test_smart_scheduling():
+    """
+    Test endpoint for smart scheduling with sample data.
+    
+    Returns:
+        SmartSchedulingResponse with results from a sample scheduling request
+    """
+    sample_activity = {
+        "title": "Team Lunch",
+        "activity_type": "dining",
+        "weather_preference": "indoor"
+    }
+    
+    sample_participants = [
+        {
+            "id": "user1",
+            "name": "Alice Johnson",
+            "email": "alice@example.com",
+            "google_calendar_credentials": None
+        },
+        {
+            "id": "user2",
+            "name": "Bob Smith",
+            "email": "bob@example.com",
+            "google_calendar_credentials": None
+        }
+    ]
+    
+    try:
+        result = await smart_scheduling_service.suggest_optimal_times(
+            activity=sample_activity,
+            participants=sample_participants,
+            date_range_days=7,
+            max_suggestions=3
+        )
+        
+        return SmartSchedulingResponse(
+            success=result.get("success", False),
+            suggestions=result.get("suggestions", []),
+            participants_analyzed=result.get("participants_analyzed", 0),
+            calendar_data_available=result.get("calendar_data_available", 0),
+            weather_considered=result.get("weather_considered", False),
+            metadata=result.get("metadata", {}),
+            error=result.get("error")
+        )
+    except Exception as e:
+        return SmartSchedulingResponse(
+            success=False,
+            suggestions=[],
+            participants_analyzed=0,
+            calendar_data_available=0,
+            weather_considered=False,
+            metadata={},
+            error=str(e)
+        )

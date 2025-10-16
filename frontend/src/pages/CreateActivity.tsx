@@ -7,8 +7,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Label } from '@/components/ui/label';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Send, ArrowLeft, Users, Calendar as CalendarIcon, MapPin, Cloud, Lightbulb, Loader2, Brain, MessageSquare, UserPlus, Plus, Check } from 'lucide-react';
+import { Send, ArrowLeft, Users, Calendar as CalendarIcon, MapPin, Cloud, Lightbulb, Loader2, Brain, MessageSquare, UserPlus, Plus, Check, Clock, X, Star, DollarSign, Home, TreePine, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { format } from 'date-fns';
 import { useAuth } from '@/contexts/AuthContext';
@@ -16,6 +17,8 @@ import { apiService } from '@/services/api';
 import IntentParser from '@/components/IntentParser';
 import RecommendationGenerator from '@/components/RecommendationGenerator';
 import ThinkingScreen from '@/components/ThinkingScreen';
+import SmartScheduling from '@/components/SmartScheduling';
+import { cn } from '@/lib/utils';
 
 const CreateActivity = () => {
   const navigate = useNavigate();
@@ -29,8 +32,20 @@ const CreateActivity = () => {
     description: '',
     timeframe: '',
     activityType: '',
-    invitees: []
+    invitees: [],
+    deadline: undefined,
+    // Enhanced fields from intent parsing
+    selectedDate: '',
+    duration: '',
+    indoorOutdoorPreference: '',
+    groupSize: '',
+    specificPeople: [],
+    requirements: [],
+    mood: '',
+    budget: '',
+    location: ''
   });
+  const [deadlineDate, setDeadlineDate] = useState<Date | undefined>(undefined);
   const { user, isAuthenticated } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   
@@ -39,6 +54,10 @@ const CreateActivity = () => {
   const [selectedSuggestions, setSelectedSuggestions] = useState([]);
   const [customSuggestion, setCustomSuggestion] = useState('');
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  
+  // Smart scheduling state
+  const [showSmartScheduling, setShowSmartScheduling] = useState(false);
+  const [selectedSchedulingTime, setSelectedSchedulingTime] = useState(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -93,7 +112,7 @@ const CreateActivity = () => {
       if (response.data && response.data.success) {
         const intentData = response.data.data;
         
-        // Extract relevant information from the parsed intent
+        // Extract comprehensive information from the parsed intent
         const parsed = {
           title: intentData.activity?.specific_activity ||
                  intentData.activity?.description ||
@@ -102,7 +121,21 @@ const CreateActivity = () => {
           timeframe: intentData.datetime?.relative_time ||
                     intentData.datetime?.time ||
                     'flexible',
-          activityType: intentData.activity?.type || 'social'
+          activityType: intentData.activity?.type || 'social',
+          // Enhanced data extraction
+          selectedDate: intentData.datetime?.date || '',
+          duration: intentData.datetime?.duration || '',
+          indoorOutdoorPreference: intentData.location?.indoor_outdoor || 'either',
+          groupSize: intentData.participants?.count ?
+                    intentData.participants.count.toString() :
+                    (intentData.participants?.type || ''),
+          specificPeople: intentData.participants?.specific_people || [],
+          requirements: intentData.requirements || [],
+          mood: intentData.mood || 'neutral',
+          budget: intentData.budget?.level || 'unspecified',
+          location: intentData.location?.details || '',
+          confidence: intentData.activity?.confidence || 0,
+          rawIntentData: intentData // Store full parsed data for reference
         };
 
         setParsedIntent(parsed);
@@ -111,7 +144,16 @@ const CreateActivity = () => {
           title: parsed.title,
           description: parsed.description,
           timeframe: parsed.timeframe,
-          activityType: parsed.activityType
+          activityType: parsed.activityType,
+          selectedDate: parsed.selectedDate,
+          duration: parsed.duration,
+          indoorOutdoorPreference: parsed.indoorOutdoorPreference,
+          groupSize: parsed.groupSize,
+          specificPeople: parsed.specificPeople,
+          requirements: parsed.requirements,
+          mood: parsed.mood,
+          budget: parsed.budget,
+          location: parsed.location
         }));
         setStep('review');
       } else {
@@ -149,30 +191,72 @@ const CreateActivity = () => {
       setStep('suggestions');
       // Fetch suggestions when entering the suggestions step
       fetchSuggestions();
+    } else if (choice === 'smart-scheduling') {
+      setStep('smart-scheduling');
     } else if (choice === 'invites') {
       navigate('/invite-guests', { state: { activity } });
     }
   };
 
+  const handleSmartSchedulingSelect = (suggestion) => {
+    setSelectedSchedulingTime(suggestion);
+    // Update activity with selected time
+    const updatedActivity = {
+      ...activity,
+      selected_date: suggestion.start,
+      smart_scheduling_suggestion: suggestion
+    };
+    setActivity(updatedActivity);
+  };
+
+  const handleContinueWithScheduling = () => {
+    if (selectedSchedulingTime) {
+      const updatedActivity = {
+        ...activity,
+        selected_date: selectedSchedulingTime.start,
+        smart_scheduling_suggestion: selectedSchedulingTime
+      };
+      navigate('/invite-guests', { state: { activity: updatedActivity } });
+    }
+  };
+
   const fetchSuggestions = async () => {
-    if (!activity) return;
+    if (!activity && !activityData.description) return;
     
     setIsLoadingSuggestions(true);
     try {
-      const response = await apiService.generateSuggestions({
-        activity_description: activity.description || activityData.description,
-        date: activity.selected_date,
-        indoor_outdoor_preference: activity.weather_preference,
-        group_size: activity.group_size ? parseInt(activity.group_size) : undefined
-      });
+      // Use enhanced data from intent parsing
+      const requestData = {
+        activity_description: activity?.description || activityData.description,
+        date: activity?.selected_date || activityData.selectedDate,
+        indoor_outdoor_preference: activity?.weather_preference || activityData.indoorOutdoorPreference,
+        group_size: activity?.group_size ?
+                   parseInt(activity.group_size) :
+                   (activityData.groupSize && !isNaN(parseInt(activityData.groupSize)) ?
+                    parseInt(activityData.groupSize) : undefined),
+        // Enhanced context from intent parsing
+        activity_type: activityData.activityType,
+        mood: activityData.mood,
+        budget: activityData.budget,
+        duration: activityData.duration,
+        location: activityData.location,
+        requirements: activityData.requirements,
+        specific_people: activityData.specificPeople
+      };
+
+      const response = await apiService.generateSuggestions(requestData);
 
       if (response.data && response.data.success) {
         setSuggestions(response.data.suggestions || []);
+        if (response.data.suggestions?.length === 0) {
+          showError('No suggestions could be generated. Try adjusting your activity description.');
+        }
       } else {
-        showError(response.error || 'Failed to generate suggestions');
+        showError(response.error || 'Failed to generate suggestions. Please try again.');
       }
     } catch (error) {
-      showError('Network error occurred while fetching suggestions');
+      console.error('Error fetching suggestions:', error);
+      showError('Network error occurred while fetching suggestions. Please check your connection and try again.');
     } finally {
       setIsLoadingSuggestions(false);
     }
@@ -229,16 +313,53 @@ const CreateActivity = () => {
     try {
       setIsLoading(true);
       
-      const response = await apiService.createActivity({
+      // Prepare enhanced activity data with all parsed information
+      const enhancedActivityData = {
         title: activityData.title,
         description: activityData.description,
         timeframe: activityData.timeframe,
-        activity_type: activityData.activityType
-      });
+        activity_type: activityData.activityType,
+        deadline: deadlineDate ? deadlineDate.toISOString() : undefined,
+        // Enhanced fields from intent parsing
+        selected_date: activityData.selectedDate || undefined,
+        weather_preference: activityData.indoorOutdoorPreference !== 'either' ?
+                           activityData.indoorOutdoorPreference : undefined,
+        group_size: activityData.groupSize || undefined,
+        // Store additional parsed data as metadata
+        metadata: {
+          duration: activityData.duration,
+          mood: activityData.mood,
+          budget: activityData.budget,
+          location: activityData.location,
+          specific_people: activityData.specificPeople,
+          requirements: activityData.requirements,
+          ai_confidence: parsedIntent?.confidence,
+          parsed_at: new Date().toISOString()
+        }
+      };
+
+      const response = await apiService.createActivity(enhancedActivityData);
 
       if (response.data) {
-        showSuccess('Activity created successfully!');
-        navigate('/weather-planning', { state: { activity: response.data } });
+        // Enhance the activity object with parsed data for downstream components
+        const enhancedActivity = {
+          ...response.data,
+          duration: activityData.duration,
+          mood: activityData.mood,
+          budget: activityData.budget,
+          location: activityData.location,
+          specific_people: activityData.specificPeople,
+          requirements: activityData.requirements,
+          // Prepare invitees from specific people mentioned
+          invitees: activityData.specificPeople.map(name => ({
+            name,
+            email: '', // Will be filled in invite step
+            response: 'pending'
+          }))
+        };
+
+        showSuccess('Activity created successfully with AI insights!');
+        navigate('/weather-planning', { state: { activity: enhancedActivity } });
       } else {
         showError(response.error || 'Failed to create activity');
       }
@@ -384,35 +505,352 @@ const CreateActivity = () => {
         {step === 'thinking' && (
           <ThinkingScreen
             onComplete={handleThinkingComplete}
-            message="The AI is thinking about your activity..."
-            minDelay={1500}
+            message="AI is analyzing your activity description and extracting key details..."
+            minDelay={2000}
           />
         )}
 
         {step === 'review' && parsedIntent && (
           <div className="space-y-6">
+            {/* AI Confidence Indicator */}
+            {parsedIntent.confidence && (
+              <Card className="bg-blue-50 border-blue-200">
+                <CardContent className="pt-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      {parsedIntent.confidence >= 0.8 ? (
+                        <CheckCircle2 className="w-5 h-5 text-green-600" />
+                      ) : parsedIntent.confidence >= 0.6 ? (
+                        <AlertCircle className="w-5 h-5 text-yellow-600" />
+                      ) : (
+                        <AlertCircle className="w-5 h-5 text-red-600" />
+                      )}
+                      <span className="font-medium">
+                        AI Confidence: {Math.round(parsedIntent.confidence * 100)}%
+                      </span>
+                    </div>
+                    <div className="flex-1 bg-gray-200 rounded-full h-2">
+                      <div
+                        className={`h-2 rounded-full ${
+                          parsedIntent.confidence >= 0.8 ? 'bg-green-500' :
+                          parsedIntent.confidence >= 0.6 ? 'bg-yellow-500' : 'bg-red-500'
+                        }`}
+                        style={{ width: `${parsedIntent.confidence * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-sm text-gray-600 mt-2">
+                    {parsedIntent.confidence >= 0.8 ?
+                      "High confidence - AI understood your request very well!" :
+                      parsedIntent.confidence >= 0.6 ?
+                      "Medium confidence - Please review and adjust the details below." :
+                      "Low confidence - Please carefully review and edit the extracted information."
+                    }
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
             <Card>
               <CardHeader>
-                <CardTitle>I understood your idea!</CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  <Brain className="w-5 h-5" style={{ color: '#1155cc' }} />
+                  I understood your idea!
+                </CardTitle>
                 <CardDescription>
                   Here's what I gathered from your description. Please check and edit if needed.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Activity Title</label>
-                  <Input
-                    value={activityData.title}
-                    onChange={(e) => setActivityData(prev => ({ ...prev, title: e.target.value }))}
-                  />
+              <CardContent className="space-y-6">
+                {/* Basic Information */}
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                    <Lightbulb className="w-4 h-4" />
+                    Basic Information
+                  </h4>
+                  
+                  <div className="grid gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Activity Title</label>
+                      <Input
+                        value={activityData.title}
+                        onChange={(e) => setActivityData(prev => ({ ...prev, title: e.target.value }))}
+                        placeholder="Enter activity title"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Description</label>
+                      <Textarea
+                        value={activityData.description}
+                        onChange={(e) => setActivityData(prev => ({ ...prev, description: e.target.value }))}
+                        placeholder="Describe your activity"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Activity Type</label>
+                        <Input
+                          value={activityData.activityType}
+                          onChange={(e) => setActivityData(prev => ({ ...prev, activityType: e.target.value }))}
+                          placeholder="e.g., social, outdoor, dining"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Mood</label>
+                        <Input
+                          value={activityData.mood}
+                          onChange={(e) => setActivityData(prev => ({ ...prev, mood: e.target.value }))}
+                          placeholder="e.g., relaxed, energetic, romantic"
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Description</label>
-                  <Textarea
-                    value={activityData.description}
-                    onChange={(e) => setActivityData(prev => ({ ...prev, description: e.target.value }))}
-                  />
+                {/* Timing Information */}
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                    <Clock className="w-4 h-4" />
+                    Timing & Schedule
+                  </h4>
+                  
+                  <div className="grid gap-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Timeframe</label>
+                        <Input
+                          value={activityData.timeframe}
+                          onChange={(e) => setActivityData(prev => ({ ...prev, timeframe: e.target.value }))}
+                          placeholder="e.g., this weekend, flexible"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Duration</label>
+                        <Input
+                          value={activityData.duration}
+                          onChange={(e) => setActivityData(prev => ({ ...prev, duration: e.target.value }))}
+                          placeholder="e.g., 2 hours, all day"
+                        />
+                      </div>
+                    </div>
+
+                    {activityData.selectedDate && (
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Suggested Date</label>
+                        <Input
+                          value={activityData.selectedDate}
+                          onChange={(e) => setActivityData(prev => ({ ...prev, selectedDate: e.target.value }))}
+                          type="date"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Location & Preferences */}
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                    <MapPin className="w-4 h-4" />
+                    Location & Preferences
+                  </h4>
+                  
+                  <div className="grid gap-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Indoor/Outdoor Preference</label>
+                        <div className="flex gap-2">
+                          {['indoor', 'outdoor', 'either'].map((pref) => (
+                            <Button
+                              key={pref}
+                              variant={activityData.indoorOutdoorPreference === pref ? "default" : "outline"}
+                              size="sm"
+                              onClick={() => setActivityData(prev => ({ ...prev, indoorOutdoorPreference: pref }))}
+                              className="flex items-center gap-1"
+                            >
+                              {pref === 'indoor' && <Home className="w-3 h-3" />}
+                              {pref === 'outdoor' && <TreePine className="w-3 h-3" />}
+                              {pref === 'either' && <Star className="w-3 h-3" />}
+                              {pref.charAt(0).toUpperCase() + pref.slice(1)}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Budget Level</label>
+                        <div className="flex gap-2">
+                          {['free', 'low', 'medium', 'high'].map((budget) => (
+                            <Button
+                              key={budget}
+                              variant={activityData.budget === budget ? "default" : "outline"}
+                              size="sm"
+                              onClick={() => setActivityData(prev => ({ ...prev, budget }))}
+                              className="flex items-center gap-1"
+                            >
+                              <DollarSign className="w-3 h-3" />
+                              {budget.charAt(0).toUpperCase() + budget.slice(1)}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {activityData.location && (
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Specific Location</label>
+                        <Input
+                          value={activityData.location}
+                          onChange={(e) => setActivityData(prev => ({ ...prev, location: e.target.value }))}
+                          placeholder="Enter specific location or venue"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Participants */}
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                    <Users className="w-4 h-4" />
+                    Participants
+                  </h4>
+                  
+                  <div className="grid gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Group Size</label>
+                      <Input
+                        value={activityData.groupSize}
+                        onChange={(e) => setActivityData(prev => ({ ...prev, groupSize: e.target.value }))}
+                        placeholder="e.g., 4, small group, family"
+                      />
+                    </div>
+
+                    {activityData.specificPeople && activityData.specificPeople.length > 0 && (
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Specific People Mentioned</label>
+                        <div className="flex flex-wrap gap-2">
+                          {activityData.specificPeople.map((person, index) => (
+                            <Badge key={index} variant="secondary" className="flex items-center gap-1">
+                              <Users className="w-3 h-3" />
+                              {person}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-auto p-0 ml-1"
+                                onClick={() => {
+                                  const newPeople = activityData.specificPeople.filter((_, i) => i !== index);
+                                  setActivityData(prev => ({ ...prev, specificPeople: newPeople }));
+                                }}
+                              >
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Requirements */}
+                {activityData.requirements && activityData.requirements.length > 0 && (
+                  <div className="space-y-4">
+                    <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4" />
+                      Requirements & Considerations
+                    </h4>
+                    
+                    <div className="flex flex-wrap gap-2">
+                      {activityData.requirements.map((req, index) => (
+                        <Badge key={index} variant="outline" className="flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" />
+                          {req}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-auto p-0 ml-1"
+                            onClick={() => {
+                              const newReqs = activityData.requirements.filter((_, i) => i !== index);
+                              setActivityData(prev => ({ ...prev, requirements: newReqs }));
+                            }}
+                          >
+                            <X className="w-3 h-3" />
+                          </Button>
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Response Deadline */}
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                    <Clock className="w-4 h-4" />
+                    Response Deadline
+                  </h4>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="deadline">Response Deadline (Optional)</Label>
+                    <div className="flex gap-2">
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            id="deadline"
+                            variant="outline"
+                            className={cn(
+                              "flex-1 justify-start text-left font-normal",
+                              !deadlineDate && "text-muted-foreground"
+                            )}
+                          >
+                            <Clock className="mr-2 h-4 w-4" />
+                            {deadlineDate ? format(deadlineDate, "PPP 'at' p") : "Set response deadline"}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="single"
+                            selected={deadlineDate}
+                            onSelect={setDeadlineDate}
+                            disabled={(date) => date < new Date()}
+                            initialFocus
+                          />
+                          {deadlineDate && (
+                            <div className="p-3 border-t">
+                              <Label htmlFor="deadline-time" className="text-sm font-medium">Time</Label>
+                              <Input
+                                id="deadline-time"
+                                type="time"
+                                className="mt-1"
+                                onChange={(e) => {
+                                  if (deadlineDate && e.target.value) {
+                                    const [hours, minutes] = e.target.value.split(':');
+                                    const newDate = new Date(deadlineDate);
+                                    newDate.setHours(parseInt(hours), parseInt(minutes));
+                                    setDeadlineDate(newDate);
+                                  }
+                                }}
+                                value={deadlineDate ? format(deadlineDate, 'HH:mm') : ''}
+                              />
+                            </div>
+                          )}
+                        </PopoverContent>
+                      </Popover>
+                      {deadlineDate && (
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setDeadlineDate(undefined)}
+                          className="shrink-0"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      Set a deadline for when you need responses from invitees. You'll get notifications as the deadline approaches.
+                    </p>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -438,7 +876,7 @@ const CreateActivity = () => {
                     Creating...
                   </>
                 ) : (
-                  'Weather Planning'
+                  'Continue to Weather Planning'
                 )}
               </Button>
             </div>
@@ -454,11 +892,28 @@ const CreateActivity = () => {
                   How would you like to proceed?
                 </CardTitle>
                 <CardDescription>
-                  Do you want to include suggestions to the group, or prefer to gather their preferences first?
+                  Choose how you'd like to enhance your activity planning
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-4">
+                  <Button
+                    onClick={() => handleSuggestionsChoice('smart-scheduling')}
+                    className="h-auto p-6 text-left justify-start"
+                    variant="outline"
+                    style={{ borderColor: '#1155cc' }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <Brain className="w-5 h-5 mt-1" style={{ color: '#1155cc' }} />
+                      <div>
+                        <div className="font-semibold text-base mb-1">Smart Scheduling</div>
+                        <div className="text-sm text-gray-600">
+                          AI-powered optimal time suggestions based on participant availability
+                        </div>
+                      </div>
+                    </div>
+                  </Button>
+                  
                   <Button
                     onClick={() => handleSuggestionsChoice('suggestions')}
                     className="h-auto p-6 text-left justify-start"
@@ -468,7 +923,7 @@ const CreateActivity = () => {
                     <div className="flex items-start gap-3">
                       <Lightbulb className="w-5 h-5 mt-1" style={{ color: '#ff9900' }} />
                       <div>
-                        <div className="font-semibold text-base mb-1">Include suggestions</div>
+                        <div className="font-semibold text-base mb-1">Activity Suggestions</div>
                         <div className="text-sm text-gray-600">
                           Generate activity suggestions and share them with your invites
                         </div>
@@ -494,6 +949,91 @@ const CreateActivity = () => {
                 style={{ backgroundColor: '#1155cc', color: 'white' }}
               >
                 Send Invites
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {step === 'smart-scheduling' && activity && (
+          <div className="space-y-6">
+            {/* Enhanced Smart Scheduling with parsed data */}
+            <SmartScheduling
+              activity={{
+                title: activity.title,
+                activity_type: activity.activity_type || activityData.activityType,
+                weather_preference: activity.weather_preference || activityData.indoorOutdoorPreference,
+                duration: activityData.duration,
+                mood: activityData.mood,
+                budget: activityData.budget,
+                requirements: activityData.requirements
+              }}
+              participants={
+                // Use parsed specific people if available, otherwise use existing invitees
+                activityData.specificPeople.length > 0
+                  ? activityData.specificPeople.map(name => ({
+                      name,
+                      email: '', // Will be filled later
+                      id: `temp-${name.toLowerCase().replace(/\s+/g, '-')}`
+                    }))
+                  : (activity.invitees || [])
+              }
+              onSuggestionSelect={handleSmartSchedulingSelect}
+              onClose={() => setShowSmartScheduling(false)}
+            />
+
+            {/* Show parsed context information */}
+            {(activityData.duration || activityData.mood || activityData.requirements.length > 0) && (
+              <Card className="bg-blue-50 border-blue-200">
+                <CardContent className="pt-4">
+                  <h4 className="font-semibold text-blue-900 mb-2">AI Context for Scheduling</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {activityData.duration && (
+                      <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                        <Clock className="w-3 h-3 mr-1" />
+                        Duration: {activityData.duration}
+                      </Badge>
+                    )}
+                    {activityData.mood && (
+                      <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                        <Star className="w-3 h-3 mr-1" />
+                        Mood: {activityData.mood}
+                      </Badge>
+                    )}
+                    {activityData.requirements.length > 0 && (
+                      <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                        <AlertCircle className="w-3 h-3 mr-1" />
+                        {activityData.requirements.length} requirement{activityData.requirements.length !== 1 ? 's' : ''}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-sm text-blue-700 mt-2">
+                    Smart scheduling is considering these AI-extracted preferences for optimal timing.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setStep('suggestions-pre-invites')}
+                className="flex-1"
+                style={{ borderColor: '#1155cc', color: '#1155cc' }}
+              >
+                Back
+              </Button>
+              <Button
+                onClick={handleContinueWithScheduling}
+                disabled={!selectedSchedulingTime}
+                className="flex-1"
+                style={{ backgroundColor: '#1155cc', color: 'white' }}
+              >
+                Continue with Selected Time
+                {selectedSchedulingTime && (
+                  <span className="ml-2 bg-white text-blue-600 px-2 py-1 rounded-full text-xs">
+                    ✓
+                  </span>
+                )}
               </Button>
             </div>
           </div>

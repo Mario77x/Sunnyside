@@ -240,5 +240,15 @@ IMPORTANT:
         risk_category = assessment.get("risk_category", "unknown")
         return f"Content flagged for safety review: {risk_category.replace('_', ' ').title()}. Please adhere to community guidelines."
 
-# Global instance
-risk_assessment_service = RiskAssessmentService()
+# Global instance - using lazy initialization to avoid timing conflicts
+risk_assessment_service = None
+
+def get_risk_assessment_service():
+    """
+    Get the risk assessment service instance using lazy initialization.
+    This ensures the service is only created when needed, after secrets are loaded.
+    """
+    global risk_assessment_service
+    if risk_assessment_service is None:
+        risk_assessment_service = RiskAssessmentService()
+    return risk_assessment_service

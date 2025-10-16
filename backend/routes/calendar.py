@@ -10,21 +10,11 @@ import logging
 from backend.auth import get_current_user, security
 from backend.services.google_calendar import google_calendar_service
 from backend.models.user import User
+from backend.dependencies import get_database
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
-
-
-async def get_database():
-    """Dependency to get database connection."""
-    import backend.main as main_module
-    if main_module.mongodb_client is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database connection not available"
-        )
-    return main_module.mongodb_client[main_module.DATABASE_NAME]
 
 
 @router.get("/auth/google")
@@ -187,6 +177,67 @@ async def get_calendar_availability(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get calendar availability"
+        )
+
+
+@router.get("/detailed-availability")
+async def get_detailed_calendar_availability(
+    start_date: str = Query(..., description="Start date in ISO format"),
+    end_date: str = Query(..., description="End date in ISO format"),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """Get detailed calendar availability with time slots and analysis."""
+    try:
+        # Verify user is authenticated
+        current_user = await get_current_user(credentials, db)
+        
+        # Check if user has Google Calendar integrated
+        if not current_user.google_calendar_integrated or not current_user.google_calendar_credentials:
+            return {
+                "integrated": False,
+                "message": "Google Calendar not integrated"
+            }
+        
+        # Parse dates
+        try:
+            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid date format. Use ISO format (YYYY-MM-DDTHH:MM:SS)"
+            )
+        
+        # Refresh credentials if needed
+        credentials_dict = google_calendar_service.refresh_access_token(
+            current_user.google_calendar_credentials
+        )
+        
+        # Update credentials in database if they were refreshed
+        if credentials_dict != current_user.google_calendar_credentials:
+            await db.users.update_one(
+                {"_id": ObjectId(current_user.id)},
+                {"$set": {"google_calendar_credentials": credentials_dict}}
+            )
+        
+        # Get detailed availability
+        detailed_availability = google_calendar_service.get_detailed_availability(
+            credentials_dict, start_dt, end_dt
+        )
+        
+        return {
+            "integrated": True,
+            "detailed_availability": detailed_availability
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting detailed calendar availability: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get detailed calendar availability"
         )
 
 

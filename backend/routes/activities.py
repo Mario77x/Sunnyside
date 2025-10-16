@@ -24,19 +24,9 @@ from backend.models.user import UserResponse
 from backend.auth import get_current_user, security
 from backend.services.notifications import NotificationService
 from backend.utils.environment import get_invite_link
+from backend.dependencies import get_database
 
 router = APIRouter(prefix="/activities", tags=["activities"])
-
-
-async def get_database():
-    """Dependency to get database connection."""
-    import backend.main as main_module
-    if main_module.mongodb_client is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database connection not available"
-        )
-    return main_module.mongodb_client[main_module.DATABASE_NAME]
 
 
 async def create_activity_in_db(db: AsyncIOMotorDatabase, activity_data: dict) -> dict:

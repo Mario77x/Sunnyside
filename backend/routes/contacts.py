@@ -25,18 +25,9 @@ from backend.models.user import UserResponse
 from backend.auth import get_current_user, security
 from backend.services.notifications import NotificationService
 
+from backend.dependencies import get_database
+
 router = APIRouter(prefix="/contacts", tags=["contacts"])
-
-
-async def get_database():
-    """Dependency to get database connection."""
-    import backend.main as main_module
-    if main_module.mongodb_client is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database connection not available"
-        )
-    return main_module.mongodb_client[main_module.DATABASE_NAME]
 
 
 async def get_user_by_email(db: AsyncIOMotorDatabase, email: str) -> dict:

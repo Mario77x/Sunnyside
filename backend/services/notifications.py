@@ -9,6 +9,16 @@ from pydantic import BaseModel
 
 from backend.utils.environment import get_frontend_url, get_invite_link, get_signup_link, is_local_development
 
+# Twilio imports (optional dependency)
+try:
+    from twilio.rest import Client as TwilioClient
+    from twilio.base.exceptions import TwilioException
+    TWILIO_AVAILABLE = True
+except ImportError:
+    TWILIO_AVAILABLE = False
+    TwilioClient = None
+    TwilioException = Exception
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -24,10 +34,11 @@ class NotificationDocument(BaseModel):
 
 
 class NotificationService:
-    """Service for handling email notifications via EmailJS and in-app notifications."""
+    """Service for handling email notifications via EmailJS, SMS/WhatsApp via Twilio, and in-app notifications."""
     
     def __init__(self):
-        """Initialize the notification service with EmailJS configuration."""
+        """Initialize the notification service with EmailJS and Twilio configuration."""
+        # EmailJS configuration
         self.emailjs_service_id = os.getenv("EMAILJS_SERVICE_ID")
         self.emailjs_public_key = os.getenv("EMAILJS_PUBLIC_KEY")
         self.from_email = "noreply@sunnyside.app"
@@ -35,6 +46,25 @@ class NotificationService:
         
         # EmailJS REST API endpoint
         self.emailjs_api_url = "https://api.emailjs.com/api/v1.0/email/send"
+        
+        # Twilio configuration
+        self.twilio_account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        self.twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        self.twilio_phone_number = os.getenv("TWILIO_PHONE_NUMBER")
+        self.twilio_whatsapp_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
+        
+        # Initialize Twilio client if credentials are available
+        self.twilio_client = None
+        if TWILIO_AVAILABLE and self.twilio_account_sid and self.twilio_auth_token:
+            try:
+                self.twilio_client = TwilioClient(self.twilio_account_sid, self.twilio_auth_token)
+                logger.info("Twilio client initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize Twilio client: {str(e)}")
+        elif not TWILIO_AVAILABLE:
+            logger.warning("Twilio library not available. SMS/WhatsApp functionality will be disabled.")
+        else:
+            logger.warning("Twilio credentials not found. SMS/WhatsApp functionality will be disabled.")
         
         # Load all EmailJS template IDs
         self.template_ids = {
@@ -92,8 +122,13 @@ class NotificationService:
             logger.info(f"LOCAL DEV: Template params: {template_params}")
             return True
         elif not self.emailjs_service_id or not self.emailjs_public_key:
-            logger.error("EmailJS credentials not configured. Cannot send email.")
-            return False
+            if is_local_development():
+                logger.info(f"LOCAL DEV: Would send email to {to_email} using template '{template_key}'")
+                logger.info(f"LOCAL DEV: Template params: {template_params}")
+                return True
+            else:
+                logger.error("EmailJS credentials not configured. Cannot send email.")
+                return False
         
         try:
             # Prepare the JSON payload for EmailJS REST API
@@ -1086,3 +1121,237 @@ class NotificationService:
         # Clean up whitespace
         text = re.sub(r'\s+', ' ', text).strip()
         return text
+    
+    async def send_sms(
+        self,
+        to_phone: str,
+        message: str,
+        activity_title: Optional[str] = None
+    ) -> bool:
+        """
+        Send an SMS message using Twilio.
+        
+        Args:
+            to_phone: Recipient phone number (E.164 format, e.g., +1234567890)
+            message: SMS message content
+            activity_title: Optional activity title for logging
+            
+        Returns:
+            bool: True if SMS was sent successfully, False otherwise
+        """
+        if not self.twilio_client or not self.twilio_phone_number:
+            if is_local_development():
+                logger.info(f"LOCAL DEV: Would send SMS to {to_phone}: {message}")
+                return True
+            else:
+                logger.error("Twilio client not configured. Cannot send SMS.")
+                return False
+        
+        try:
+            message_obj = self.twilio_client.messages.create(
+                body=message,
+                from_=self.twilio_phone_number,
+                to=to_phone
+            )
+            
+            logger.info(f"SMS sent successfully to {to_phone}. SID: {message_obj.sid}")
+            if activity_title:
+                logger.info(f"SMS was for activity: {activity_title}")
+            return True
+            
+        except TwilioException as e:
+            logger.error(f"Twilio error sending SMS to {to_phone}: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"Error sending SMS to {to_phone}: {str(e)}")
+            return False
+    
+    async def send_whatsapp(
+        self,
+        to_phone: str,
+        message: str,
+        activity_title: Optional[str] = None
+    ) -> bool:
+        """
+        Send a WhatsApp message using Twilio.
+        
+        Args:
+            to_phone: Recipient phone number (E.164 format, e.g., +1234567890)
+            message: WhatsApp message content
+            activity_title: Optional activity title for logging
+            
+        Returns:
+            bool: True if WhatsApp message was sent successfully, False otherwise
+        """
+        if not self.twilio_client or not self.twilio_whatsapp_number:
+            if is_local_development():
+                logger.info(f"LOCAL DEV: Would send WhatsApp to {to_phone}: {message}")
+                return True
+            else:
+                logger.error("Twilio WhatsApp not configured. Cannot send WhatsApp message.")
+                return False
+        
+        try:
+            # Format the recipient number for WhatsApp
+            whatsapp_to = f"whatsapp:{to_phone}"
+            
+            message_obj = self.twilio_client.messages.create(
+                body=message,
+                from_=self.twilio_whatsapp_number,
+                to=whatsapp_to
+            )
+            
+            logger.info(f"WhatsApp message sent successfully to {to_phone}. SID: {message_obj.sid}")
+            if activity_title:
+                logger.info(f"WhatsApp message was for activity: {activity_title}")
+            return True
+            
+        except TwilioException as e:
+            logger.error(f"Twilio error sending WhatsApp to {to_phone}: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"Error sending WhatsApp to {to_phone}: {str(e)}")
+            return False
+    
+    async def send_activity_invitation_sms(
+        self,
+        to_phone: str,
+        to_name: str,
+        organizer_name: str,
+        activity_title: str,
+        activity_description: str,
+        invite_link: Optional[str] = None
+    ) -> bool:
+        """
+        Send an activity invitation via SMS.
+        
+        Args:
+            to_phone: Recipient phone number
+            to_name: Recipient name
+            organizer_name: Name of the activity organizer
+            activity_title: Title of the activity
+            activity_description: Description of the activity
+            invite_link: Link to respond to the invitation
+            
+        Returns:
+            bool: True if SMS was sent successfully, False otherwise
+        """
+        message = f"Hi {to_name}! {organizer_name} invited you to '{activity_title}'. "
+        message += f"{activity_description[:100]}{'...' if len(activity_description) > 100 else ''}"
+        
+        if invite_link:
+            message += f"\n\nRespond here: {invite_link}"
+        
+        message += "\n\n- Sunnyside"
+        
+        return await self.send_sms(to_phone, message, activity_title)
+    
+    async def send_activity_invitation_whatsapp(
+        self,
+        to_phone: str,
+        to_name: str,
+        organizer_name: str,
+        activity_title: str,
+        activity_description: str,
+        invite_link: Optional[str] = None
+    ) -> bool:
+        """
+        Send an activity invitation via WhatsApp.
+        
+        Args:
+            to_phone: Recipient phone number
+            to_name: Recipient name
+            organizer_name: Name of the activity organizer
+            activity_title: Title of the activity
+            activity_description: Description of the activity
+            invite_link: Link to respond to the invitation
+            
+        Returns:
+            bool: True if WhatsApp message was sent successfully, False otherwise
+        """
+        message = f"🌞 *Sunnyside Activity Invitation*\n\n"
+        message += f"Hi {to_name}!\n\n"
+        message += f"{organizer_name} invited you to join:\n"
+        message += f"*{activity_title}*\n\n"
+        message += f"{activity_description}\n\n"
+        
+        if invite_link:
+            message += f"👆 Respond here: {invite_link}\n\n"
+        
+        message += "Have a sunny day! ☀️"
+        
+        return await self.send_whatsapp(to_phone, message, activity_title)
+    
+    async def send_activity_reminder_sms(
+        self,
+        to_phone: str,
+        to_name: str,
+        activity_title: str,
+        activity_date: str,
+        activity_time: Optional[str] = None,
+        venue_name: Optional[str] = None
+    ) -> bool:
+        """
+        Send an activity reminder via SMS.
+        
+        Args:
+            to_phone: Recipient phone number
+            to_name: Recipient name
+            activity_title: Title of the activity
+            activity_date: Date of the activity
+            activity_time: Time of the activity
+            venue_name: Name of the venue
+            
+        Returns:
+            bool: True if SMS was sent successfully, False otherwise
+        """
+        message = f"Hi {to_name}! Reminder: '{activity_title}' is tomorrow"
+        
+        if activity_time:
+            message += f" at {activity_time}"
+        
+        if venue_name:
+            message += f" at {venue_name}"
+        
+        message += f" on {activity_date}. See you there!"
+        message += "\n\n- Sunnyside"
+        
+        return await self.send_sms(to_phone, message, activity_title)
+    
+    async def send_activity_reminder_whatsapp(
+        self,
+        to_phone: str,
+        to_name: str,
+        activity_title: str,
+        activity_date: str,
+        activity_time: Optional[str] = None,
+        venue_name: Optional[str] = None
+    ) -> bool:
+        """
+        Send an activity reminder via WhatsApp.
+        
+        Args:
+            to_phone: Recipient phone number
+            to_name: Recipient name
+            activity_title: Title of the activity
+            activity_date: Date of the activity
+            activity_time: Time of the activity
+            venue_name: Name of the venue
+            
+        Returns:
+            bool: True if WhatsApp message was sent successfully, False otherwise
+        """
+        message = f"🔔 *Activity Reminder*\n\n"
+        message += f"Hi {to_name}!\n\n"
+        message += f"Don't forget: *{activity_title}* is tomorrow!\n\n"
+        message += f"📅 Date: {activity_date}\n"
+        
+        if activity_time:
+            message += f"🕐 Time: {activity_time}\n"
+        
+        if venue_name:
+            message += f"📍 Venue: {venue_name}\n"
+        
+        message += f"\nSee you there! 🌞"
+        
+        return await self.send_whatsapp(to_phone, message, activity_title)

@@ -15,19 +15,9 @@ from backend.auth import (
     security
 )
 from backend.services.notifications import NotificationService
+from backend.dependencies import get_database
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
-
-
-async def get_database():
-    """Dependency to get database connection."""
-    import backend.main as main_module
-    if main_module.mongodb_client is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database connection not available"
-        )
-    return main_module.mongodb_client[main_module.DATABASE_NAME]
 
 
 @router.post("/signup", response_model=Token)

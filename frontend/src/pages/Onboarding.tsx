@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRight, MapPin, User, Heart, Loader2, UserPlus, Calendar } from 'lucide-react';
+import { ArrowRight, MapPin, User, Heart, Loader2, UserPlus, Calendar, AlertTriangle, Check } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { showError, showSuccess } from '@/utils/toast';
 import { apiService } from '@/services/api';
@@ -17,6 +17,8 @@ const Onboarding = () => {
   const [step, setStep] = useState(1);
   const [invitationToken, setInvitationToken] = useState<string | null>(null);
   const [isInvitedUser, setIsInvitedUser] = useState(false);
+  const [calendarConnectionStatus, setCalendarConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
+  const [calendarError, setCalendarError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -49,7 +51,16 @@ const Onboarding = () => {
     
     if (calendarConnected === 'true') {
       showSuccess('Google Calendar connected successfully!');
+      setCalendarConnectionStatus('connected');
       setStep(5); // Move to review step
+    }
+    
+    // Check for calendar connection errors
+    const calendarError = searchParams.get('calendar_error');
+    if (calendarError) {
+      setCalendarError(decodeURIComponent(calendarError));
+      setCalendarConnectionStatus('error');
+      showError('Failed to connect Google Calendar. You can try again or skip this step.');
     }
   }, [searchParams]);
 
@@ -284,35 +295,91 @@ const Onboarding = () => {
             {step === 4 && (
               <div className="space-y-4">
                 <div className="text-center">
-                  <Calendar className="w-16 h-16 mx-auto mb-4 text-blue-600" />
-                  <h3 className="text-lg font-semibold mb-2">Connect Google Calendar</h3>
+                  <Calendar className={`w-16 h-16 mx-auto mb-4 ${
+                    calendarConnectionStatus === 'connected' ? 'text-green-600' :
+                    calendarConnectionStatus === 'error' ? 'text-red-600' :
+                    calendarConnectionStatus === 'connecting' ? 'text-blue-600 animate-pulse' :
+                    'text-blue-600'
+                  }`} />
+                  <h3 className="text-lg font-semibold mb-2">
+                    {calendarConnectionStatus === 'connected' ? 'Calendar Connected!' :
+                     calendarConnectionStatus === 'connecting' ? 'Connecting Calendar...' :
+                     'Connect Google Calendar'}
+                  </h3>
                   <p className="text-sm text-gray-600 mb-6">
-                    Connect your Google Calendar to get personalized availability suggestions when planning activities.
-                    This is completely optional and you can skip this step.
+                    {calendarConnectionStatus === 'connected' ?
+                      'Great! Your Google Calendar is now connected. You\'ll get smart availability suggestions when planning activities.' :
+                      calendarConnectionStatus === 'connecting' ?
+                      'Please complete the authorization in the popup window...' :
+                      'Connect your Google Calendar to get personalized availability suggestions when planning activities. This is completely optional and you can skip this step.'
+                    }
                   </p>
                 </div>
                 
+                {/* Connection Status Messages */}
+                {calendarConnectionStatus === 'error' && calendarError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <div className="flex items-center gap-2 text-red-800">
+                      <AlertTriangle className="w-4 h-4" />
+                      <span className="text-sm font-medium">Connection Failed</span>
+                    </div>
+                    <p className="text-sm text-red-700 mt-1">{calendarError}</p>
+                  </div>
+                )}
+                
+                {calendarConnectionStatus === 'connected' && (
+                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="flex items-center gap-2 text-green-800">
+                      <Check className="w-4 h-4" />
+                      <span className="text-sm font-medium">Successfully Connected</span>
+                    </div>
+                    <p className="text-sm text-green-700 mt-1">
+                      Your calendar is now integrated. You'll see smart suggestions based on your availability.
+                    </p>
+                  </div>
+                )}
+                
                 <div className="space-y-4">
-                  <Button
-                    onClick={async () => {
-                      try {
-                        const result = await apiService.initiateGoogleCalendarAuth();
-                        if (result.data?.authorization_url) {
-                          window.location.href = result.data.authorization_url;
-                        } else {
-                          showError(result.error || 'Failed to initiate Google Calendar connection');
+                  {calendarConnectionStatus !== 'connected' && (
+                    <Button
+                      onClick={async () => {
+                        try {
+                          setCalendarConnectionStatus('connecting');
+                          setCalendarError(null);
+                          
+                          const result = await apiService.initiateGoogleCalendarAuth();
+                          if (result.data?.authorization_url) {
+                            // Open in same window to handle the OAuth flow
+                            window.location.href = result.data.authorization_url;
+                          } else {
+                            setCalendarConnectionStatus('error');
+                            setCalendarError(result.error || 'Failed to initiate Google Calendar connection');
+                            showError(result.error || 'Failed to initiate Google Calendar connection');
+                          }
+                        } catch (error) {
+                          console.error('Calendar auth error:', error);
+                          setCalendarConnectionStatus('error');
+                          setCalendarError('Unable to connect to Google Calendar. Please try again later.');
+                          showError('Unable to connect to Google Calendar. Please try again later.');
                         }
-                      } catch (error) {
-                        console.error('Calendar auth error:', error);
-                        showError('Unable to connect to Google Calendar. Please try again later.');
-                      }
-                    }}
-                    className="w-full"
-                    style={{ backgroundColor: '#1155cc', color: 'white' }}
-                  >
-                    <Calendar className="w-4 h-4 mr-2" />
-                    Connect Google Calendar
-                  </Button>
+                      }}
+                      disabled={calendarConnectionStatus === 'connecting'}
+                      className="w-full"
+                      style={{ backgroundColor: '#1155cc', color: 'white' }}
+                    >
+                      {calendarConnectionStatus === 'connecting' ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Connecting...
+                        </>
+                      ) : (
+                        <>
+                          <Calendar className="w-4 h-4 mr-2" />
+                          {calendarConnectionStatus === 'error' ? 'Try Again' : 'Connect Google Calendar'}
+                        </>
+                      )}
+                    </Button>
+                  )}
                   
                   <div className="text-center">
                     <Button
@@ -320,15 +387,28 @@ const Onboarding = () => {
                       onClick={() => setStep(5)}
                       className="text-gray-500"
                     >
-                      Skip for now
+                      {calendarConnectionStatus === 'connected' ? 'Continue' : 'Skip for now'}
                     </Button>
                   </div>
                 </div>
                 
-                <div className="text-xs text-gray-500 space-y-1">
-                  <p>• We only read your calendar to suggest available times</p>
-                  <p>• We never create, modify, or delete calendar events</p>
-                  <p>• You can disconnect at any time from your account settings</p>
+                {/* Benefits and Privacy Info */}
+                <div className="space-y-3">
+                  <div className="text-xs font-medium text-gray-700">What you'll get:</div>
+                  <div className="text-xs text-gray-600 space-y-1">
+                    <p>• Smart availability suggestions based on your actual calendar</p>
+                    <p>• Automatic conflict detection when planning activities</p>
+                    <p>• Personalized time recommendations for invitations</p>
+                    <p>• Integration with Smart Scheduling for optimal timing</p>
+                  </div>
+                  
+                  <div className="text-xs font-medium text-gray-700 mt-4">Privacy & Security:</div>
+                  <div className="text-xs text-gray-500 space-y-1">
+                    <p>• We only read your calendar to suggest available times</p>
+                    <p>• We never create, modify, or delete calendar events</p>
+                    <p>• Your calendar data is processed securely and not stored permanently</p>
+                    <p>• You can disconnect at any time from your account settings</p>
+                  </div>
                 </div>
               </div>
             )}
