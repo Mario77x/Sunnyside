@@ -253,6 +253,9 @@ Important rules:
     
     def _parse_json_response(self, response_content: str) -> Dict[str, Any]:
         """Parse JSON from the LLM response, handling potential formatting issues."""
+        print(f"[DEBUG] _parse_json_response called with content length: {len(response_content)}")
+        print(f"[DEBUG] First 200 chars: {response_content[:200]}")
+        
         try:
             # Try to extract JSON from the response
             # Remove any markdown formatting
@@ -260,6 +263,7 @@ Important rules:
             
             # Handle markdown code blocks - improved extraction
             if "```json" in cleaned_content:
+                print("[DEBUG] Found ```json marker, extracting content")
                 # Extract content between ```json and ```
                 start_marker = "```json"
                 end_marker = "```"
@@ -269,53 +273,94 @@ Important rules:
                     end_idx = cleaned_content.find(end_marker, start_idx)
                     if end_idx != -1:
                         cleaned_content = cleaned_content[start_idx:end_idx].strip()
+                        print(f"[DEBUG] Extracted JSON content: {cleaned_content[:100]}...")
             elif "```" in cleaned_content:
                 # Handle any code block format
                 lines = cleaned_content.split('\n')
                 json_lines = []
-                in_json = False
+                in_json_block = False
+                brace_count = 0
+                
                 for line in lines:
-                    if line.strip().startswith('```'):
-                        if 'json' in line.lower() or in_json:
-                            in_json = not in_json
+                    stripped_line = line.strip()
+                    
+                    # Check for code block markers
+                    if stripped_line.startswith('```'):
+                        if 'json' in stripped_line.lower():
+                            in_json_block = True
+                        elif in_json_block:
+                            # End of JSON code block
+                            break
                         continue
-                    if in_json or (line.strip().startswith('{') or line.strip().startswith('[')):
+                    
+                    # If we're in a JSON block, collect all lines
+                    if in_json_block:
                         json_lines.append(line)
-                        in_json = True
-                    elif in_json and (line.strip().endswith('}') or line.strip().endswith(']')):
+                    # If not in a marked JSON block, look for JSON structure
+                    elif stripped_line.startswith('{') or stripped_line.startswith('['):
                         json_lines.append(line)
-                        break
+                        in_json_block = True
+                        # Count braces to find the end of JSON
+                        brace_count += stripped_line.count('{') - stripped_line.count('}')
+                        brace_count += stripped_line.count('[') - stripped_line.count(']')
+                    elif in_json_block:
+                        json_lines.append(line)
+                        # Update brace count
+                        brace_count += stripped_line.count('{') - stripped_line.count('}')
+                        brace_count += stripped_line.count('[') - stripped_line.count(']')
+                        # If braces are balanced, we've found the end
+                        if brace_count <= 0:
+                            break
+                
                 if json_lines:
                     cleaned_content = '\n'.join(json_lines).strip()
             
             # Try to parse the cleaned content
-            return json.loads(cleaned_content)
-        except json.JSONDecodeError:
+            print(f"[DEBUG] Attempting to parse cleaned content: {cleaned_content[:200]}...")
+            parsed_result = json.loads(cleaned_content)
+            print(f"[DEBUG] Successfully parsed JSON with keys: {list(parsed_result.keys()) if isinstance(parsed_result, dict) else 'Not a dict'}")
+            return parsed_result
+            
+        except json.JSONDecodeError as e:
+            print(f"[DEBUG] JSON parsing failed: {e}")
+            print(f"[DEBUG] Failed content: {cleaned_content[:500]}...")
+            
             # Try to find JSON within the response using regex
             json_patterns = [
                 r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # Simple nested JSON
                 r'\{.*?\}',  # Basic JSON pattern
             ]
             
-            for pattern in json_patterns:
+            for i, pattern in enumerate(json_patterns):
+                print(f"[DEBUG] Trying regex pattern {i+1}: {pattern}")
                 json_matches = re.findall(pattern, response_content, re.DOTALL)
-                for match in json_matches:
+                print(f"[DEBUG] Found {len(json_matches)} matches with pattern {i+1}")
+                
+                for j, match in enumerate(json_matches):
                     try:
+                        print(f"[DEBUG] Trying to parse match {j+1}: {match[:100]}...")
                         parsed = json.loads(match)
                         if isinstance(parsed, dict):
+                            print(f"[DEBUG] Successfully parsed match {j+1} with keys: {list(parsed.keys())}")
                             return parsed
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as match_error:
+                        print(f"[DEBUG] Match {j+1} parsing failed: {match_error}")
                         continue
             
             # Try to extract the largest JSON-like structure
+            print("[DEBUG] Trying to extract largest JSON structure")
             json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
             if json_match:
                 try:
-                    return json.loads(json_match.group())
-                except json.JSONDecodeError:
+                    largest_match = json_match.group()
+                    print(f"[DEBUG] Found largest JSON structure: {largest_match[:200]}...")
+                    return json.loads(largest_match)
+                except json.JSONDecodeError as largest_error:
+                    print(f"[DEBUG] Largest structure parsing failed: {largest_error}")
                     pass
             
             # If all else fails, return a basic structure
+            print("[DEBUG] All JSON parsing attempts failed, raising ValueError")
             raise ValueError(f"Could not parse JSON from response: {response_content[:200]}...")
     
     def _validate_and_enhance_intent(self, parsed_intent: Dict[str, Any]) -> Dict[str, Any]:
