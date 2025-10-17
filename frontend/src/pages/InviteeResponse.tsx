@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -126,7 +126,7 @@ const InviteeResponse = () => {
     return { startDate, endDate };
   };
 
-  const { startDate: calendarStartDate, endDate: calendarEndDate } = getCalendarDateRange();
+  const { startDate: calendarStartDate, endDate: calendarEndDate } = useMemo(() => getCalendarDateRange(), [activity]);
 
   // Use the calendar availability hook
   const {
