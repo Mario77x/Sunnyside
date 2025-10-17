@@ -9,4 +9,4 @@ TEST_USER_NAME=Testy user
 # Notes:
 # - Frontend runs on port 5137
 # - Backend runs on port 8000
-# - Use these credentials for testing authentication flows
+# - Use these credentials to sign in when testing UI
