@@ -12,15 +12,8 @@ from backend.services.weather import WeatherService, get_weather_service
 router = APIRouter(prefix="/weather", tags=["weather"])
 
 
-async def get_database():
-    """Dependency to get database connection."""
-    import backend.main as main_module
-    if main_module.mongodb_client is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database connection not available"
-        )
-    return main_module.mongodb_client[main_module.DATABASE_NAME]
+# Remove the local get_database function - use the one from dependencies
+from backend.dependencies import get_database
 
 
 class WeatherRequest(BaseModel):
@@ -205,11 +198,11 @@ async def weather_health_check():
     """
     import os
     
-    api_key_configured = bool(os.getenv("KNMI_API_KEY"))
+    api_key_configured = bool(os.getenv("OPENWEATHER_API_KEY"))
     
     return {
         "status": "ok",
         "service": "weather",
         "api_key_configured": api_key_configured,
-        "provider": "KNMI"
+        "provider": "OpenWeatherMap"
     }

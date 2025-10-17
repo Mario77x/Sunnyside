@@ -145,8 +145,8 @@ class WeatherService:
                     "humidity": raw_data.get("main", {}).get("humidity"),
                     "wind_speed": raw_data.get("wind", {}).get("speed", 0) * 3.6,  # Convert m/s to km/h
                     "wind_direction": raw_data.get("wind", {}).get("deg", 0),
-                    "weather_code": raw_data.get("weather", [{}]).get("id", 800),
-                    "weather_description": raw_data.get("weather", [{}]).get("description", "Clear sky"),
+                    "weather_code": raw_data.get("weather", [{}])[0].get("id", 800),
+                    "weather_description": raw_data.get("weather", [{}])[0].get("description", "Clear sky"),
                     "visibility": raw_data.get("visibility", 10000),
                     "pressure": raw_data.get("main", {}).get("pressure"),
                     "timestamp": datetime.utcnow().isoformat()
@@ -187,8 +187,8 @@ class WeatherService:
                     "date": forecast_date.strftime("%Y-%m-%d"),
                     "temperature_max": day_data.get("temp", {}).get("max"),
                     "temperature_min": day_data.get("temp", {}).get("min"),
-                    "weather_code": day_data.get("weather", [{}]).get("id", 800),
-                    "weather_description": day_data.get("weather", [{}]).get("description", "Clear sky"),
+                    "weather_code": day_data.get("weather", [{}])[0].get("id", 800),
+                    "weather_description": day_data.get("weather", [{}])[0].get("description", "Clear sky"),
                     "precipitation_probability": int(day_data.get("pop", 0) * 100),
                     "precipitation_sum": self._safe_get_precipitation(day_data),
                     "wind_speed_max": day_data.get("wind_speed", 0) * 3.6,

@@ -254,8 +254,8 @@ class GoogleCalendarService:
             elif len(day_events) == 1:
                 # Check for gaps - handle timezone properly
                 try:
-                    event_start = datetime.fromisoformat(day_events['start'].replace('Z', '+00:00'))
-                    event_end = datetime.fromisoformat(day_events['end'].replace('Z', '+00:00'))
+                    event_start = datetime.fromisoformat(day_events[0]['start'].replace('Z', '+00:00'))
+                    event_end = datetime.fromisoformat(day_events[0]['end'].replace('Z', '+00:00'))
                 except (ValueError, TypeError):
                     # Skip invalid datetime strings
                     current_date += timedelta(days=1)
@@ -391,7 +391,7 @@ class GoogleCalendarService:
                 
                 # Check morning slot - handle timezone properly
                 try:
-                    first_event_start = datetime.fromisoformat(sorted_events['start'].replace('Z', '+00:00'))
+                    first_event_start = datetime.fromisoformat(sorted_events[0]['start'].replace('Z', '+00:00'))
                     # Ensure both datetimes have same timezone info for comparison
                     if day_start.tzinfo is None and first_event_start.tzinfo is not None:
                         day_start = day_start.replace(tzinfo=timezone.utc)
