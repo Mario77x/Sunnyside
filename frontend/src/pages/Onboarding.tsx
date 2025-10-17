@@ -423,8 +423,20 @@ const Onboarding = () => {
                   <div>
                     <strong>Preferences:</strong>{' '}
                     {Object.entries(formData.preferences)
-                      .filter(([_, value]) => value)
-                      .map(([key, _]) => key.charAt(0).toUpperCase() + key.slice(1))
+                      .filter(([_, value]) => Boolean(value))
+                      .map(([key, _]) => {
+                        const labels = {
+                          indoor: 'Indoor Activities',
+                          outdoor: 'Outdoor Activities',
+                          food: 'Food & Drinks',
+                          sports: 'Sports & Fitness',
+                          culture: 'Culture & Arts',
+                          nightlife: 'Nightlife',
+                          family: 'Family Activities',
+                          adventure: 'Adventure'
+                        };
+                        return labels[key] || key.charAt(0).toUpperCase() + key.slice(1);
+                      })
                       .join(', ')}
                   </div>
                 </div>

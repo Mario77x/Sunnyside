@@ -138,6 +138,8 @@ class NotificationService:
                 "user_id": self.emailjs_public_key,
                 "template_params": {
                     "to_email": to_email,
+                    "to": to_email,  # Add alternative parameter name for EmailJS templates
+                    "recipient_email": to_email,  # Add another alternative parameter name
                     "to_name": template_params.get("to_name", to_email.split('@')[0]),
                     "from_name": self.from_name,
                     "from_email": self.from_email,

@@ -426,6 +426,7 @@ class ApiService {
   async inviteGuests(activityId: string, inviteData: {
     invitees: Array<{ name: string; email: string }>;
     custom_message?: string;
+    channel?: 'email' | 'whatsapp' | 'sms';
   }): Promise<ApiResponse<{ message: string; invited_count: number; guest_experience_link?: string }>> {
     const response = await fetch(`${API_BASE_URL}/api/v1/activities/${activityId}/invite`, {
       method: 'POST',
@@ -451,6 +452,7 @@ class ApiService {
     title: string;
     description?: string;
     organizer_name: string;
+    organizer_id: string;
     selected_date?: string;
     selected_days?: string[];
     activity_type?: string;
@@ -530,6 +532,7 @@ class ApiService {
       indoor_outdoor_preference?: string;
       location?: string;
       group_size?: number;
+      suggestion_type?: string; // "general" for Get Ideas tab, "specific" for after planning
     }
   ): Promise<ApiResponse<{
     success: boolean;
@@ -543,7 +546,7 @@ class ApiService {
       indoor_outdoor: string;
       group_size: string;
       tips: string;
-      venue: {
+      venue?: {
         name: string;
         address: string;
         link: string;
@@ -558,6 +561,7 @@ class ApiService {
     const requestBody = {
       query,
       max_results: maxResults,
+      suggestion_type: options?.suggestion_type || "general",
       ...options
     };
 

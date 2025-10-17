@@ -76,7 +76,7 @@ class GoogleCalendarService:
                 scopes=self.SCOPES,
                 state=state
             )
-            flow.redirect_uri = self.client_config["web"]["redirect_uris"][0]
+            flow.redirect_uri = self.client_config["web"]["redirect_uris"]
             
             authorization_url, _ = flow.authorization_url(
                 access_type='offline',
@@ -100,7 +100,7 @@ class GoogleCalendarService:
                 scopes=self.SCOPES,
                 state=state
             )
-            flow.redirect_uri = self.client_config["web"]["redirect_uris"][0]
+            flow.redirect_uri = self.client_config["web"]["redirect_uris"]
             
             flow.fetch_token(code=authorization_code)
             
@@ -153,9 +153,16 @@ class GoogleCalendarService:
             
             service = build('calendar', 'v3', credentials=credentials)
             
-            # Convert dates to RFC3339 format
-            time_min = start_date.replace(tzinfo=timezone.utc).isoformat()
-            time_max = end_date.replace(tzinfo=timezone.utc).isoformat()
+            # Convert dates to RFC3339 format - handle timezone-aware dates properly
+            if start_date.tzinfo is None:
+                time_min = start_date.replace(tzinfo=timezone.utc).isoformat()
+            else:
+                time_min = start_date.isoformat()
+            
+            if end_date.tzinfo is None:
+                time_max = end_date.replace(tzinfo=timezone.utc).isoformat()
+            else:
+                time_max = end_date.isoformat()
             
             events_result = service.events().list(
                 calendarId='primary',
@@ -166,6 +173,7 @@ class GoogleCalendarService:
             ).execute()
             
             events = events_result.get('items', [])
+            logger.info(f"Found {len(events)} events in Google Calendar")
             
             processed_events = []
             for event in events:
@@ -230,18 +238,28 @@ class GoogleCalendarService:
             day_name = current_date.strftime('%A')
             date_str = current_date.strftime('%B %d')
             
-            # Check if there are any events on this day
-            day_events = [
-                slot for slot in busy_slots
-                if datetime.fromisoformat(slot['start'].replace('Z', '+00:00')).date() == current_date
-            ]
+            # Check if there are any events on this day - handle timezone properly
+            day_events = []
+            for slot in busy_slots:
+                try:
+                    slot_start = datetime.fromisoformat(slot['start'].replace('Z', '+00:00'))
+                    if slot_start.date() == current_date:
+                        day_events.append(slot)
+                except (ValueError, TypeError):
+                    # Skip invalid datetime strings
+                    continue
             
             if not day_events:
                 suggestions.append(f"{day_name} ({date_str}) looks completely free for you")
             elif len(day_events) == 1:
-                # Check for gaps
-                event_start = datetime.fromisoformat(day_events[0]['start'].replace('Z', '+00:00'))
-                event_end = datetime.fromisoformat(day_events[0]['end'].replace('Z', '+00:00'))
+                # Check for gaps - handle timezone properly
+                try:
+                    event_start = datetime.fromisoformat(day_events['start'].replace('Z', '+00:00'))
+                    event_end = datetime.fromisoformat(day_events['end'].replace('Z', '+00:00'))
+                except (ValueError, TypeError):
+                    # Skip invalid datetime strings
+                    current_date += timedelta(days=1)
+                    continue
                 
                 if event_start.hour > 10:  # Morning free
                     suggestions.append(f"{day_name} ({date_str}) morning is available before {event_start.strftime('%I:%M %p')}")
@@ -254,9 +272,13 @@ class GoogleCalendarService:
                 # Multiple events - look for gaps
                 sorted_events = sorted(day_events, key=lambda x: x['start'])
                 for i in range(len(sorted_events) - 1):
-                    current_end = datetime.fromisoformat(sorted_events[i]['end'].replace('Z', '+00:00'))
-                    next_start = datetime.fromisoformat(sorted_events[i + 1]['start'].replace('Z', '+00:00'))
-                    gap_hours = (next_start - current_end).total_seconds() / 3600
+                    try:
+                        current_end = datetime.fromisoformat(sorted_events[i]['end'].replace('Z', '+00:00'))
+                        next_start = datetime.fromisoformat(sorted_events[i + 1]['start'].replace('Z', '+00:00'))
+                        gap_hours = (next_start - current_end).total_seconds() / 3600
+                    except (ValueError, TypeError):
+                        # Skip invalid datetime strings
+                        continue
                     
                     if gap_hours >= 2:  # At least 2 hour gap
                         suggestions.append(f"{day_name} ({date_str}) has a {int(gap_hours)}-hour window from {current_end.strftime('%I:%M %p')} to {next_start.strftime('%I:%M %p')}")
@@ -320,9 +342,13 @@ class GoogleCalendarService:
     
     def _calculate_duration_hours(self, start_str: str, end_str: str) -> float:
         """Calculate duration in hours between two datetime strings."""
-        start = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
-        end = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
-        return (end - start).total_seconds() / 3600
+        try:
+            start = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+            end = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
+            return (end - start).total_seconds() / 3600
+        except (ValueError, TypeError):
+            # Return 0 for invalid datetime strings
+            return 0.0
     
     def _generate_free_slots(self, busy_slots: List[Dict[str, Any]], start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
         """Generate free time slots based on busy periods."""
@@ -331,15 +357,25 @@ class GoogleCalendarService:
         end_date_only = end_date.date()
         
         while current_date <= end_date_only:
-            # Define working hours (9 AM to 6 PM)
+            # Define working hours (9 AM to 6 PM) - ensure timezone consistency
             day_start = datetime.combine(current_date, datetime.min.time().replace(hour=9))
             day_end = datetime.combine(current_date, datetime.min.time().replace(hour=18))
             
-            # Get events for this day
-            day_events = [
-                slot for slot in busy_slots
-                if datetime.fromisoformat(slot['start'].replace('Z', '+00:00')).date() == current_date
-            ]
+            # Make timezone-aware if needed
+            if any(slot.get('start', '').endswith('Z') or '+' in slot.get('start', '') for slot in busy_slots):
+                day_start = day_start.replace(tzinfo=timezone.utc)
+                day_end = day_end.replace(tzinfo=timezone.utc)
+            
+            # Get events for this day - handle timezone properly
+            day_events = []
+            for slot in busy_slots:
+                try:
+                    slot_start = datetime.fromisoformat(slot['start'].replace('Z', '+00:00'))
+                    if slot_start.date() == current_date:
+                        day_events.append(slot)
+                except (ValueError, TypeError):
+                    # Skip invalid datetime strings
+                    continue
             
             if not day_events:
                 # Entire day is free
@@ -353,23 +389,37 @@ class GoogleCalendarService:
                 # Find gaps between events
                 sorted_events = sorted(day_events, key=lambda x: x['start'])
                 
-                # Check morning slot
-                first_event_start = datetime.fromisoformat(sorted_events[0]['start'].replace('Z', '+00:00'))
-                if first_event_start > day_start:
-                    duration = (first_event_start - day_start).total_seconds() / 3600
-                    if duration >= 1:  # At least 1 hour
-                        free_slots.append({
-                            'start': day_start.isoformat(),
-                            'end': first_event_start.isoformat(),
-                            'duration_hours': duration,
-                            'type': 'morning'
-                        })
+                # Check morning slot - handle timezone properly
+                try:
+                    first_event_start = datetime.fromisoformat(sorted_events['start'].replace('Z', '+00:00'))
+                    # Ensure both datetimes have same timezone info for comparison
+                    if day_start.tzinfo is None and first_event_start.tzinfo is not None:
+                        day_start = day_start.replace(tzinfo=timezone.utc)
+                    elif day_start.tzinfo is not None and first_event_start.tzinfo is None:
+                        first_event_start = first_event_start.replace(tzinfo=timezone.utc)
+                    
+                    if first_event_start > day_start:
+                        duration = (first_event_start - day_start).total_seconds() / 3600
+                        if duration >= 1:  # At least 1 hour
+                            free_slots.append({
+                                'start': day_start.isoformat(),
+                                'end': first_event_start.isoformat(),
+                                'duration_hours': duration,
+                                'type': 'morning'
+                            })
+                except (ValueError, TypeError):
+                    # Skip invalid datetime strings
+                    pass
                 
-                # Check gaps between events
+                # Check gaps between events - handle timezone properly
                 for i in range(len(sorted_events) - 1):
-                    current_end = datetime.fromisoformat(sorted_events[i]['end'].replace('Z', '+00:00'))
-                    next_start = datetime.fromisoformat(sorted_events[i + 1]['start'].replace('Z', '+00:00'))
-                    duration = (next_start - current_end).total_seconds() / 3600
+                    try:
+                        current_end = datetime.fromisoformat(sorted_events[i]['end'].replace('Z', '+00:00'))
+                        next_start = datetime.fromisoformat(sorted_events[i + 1]['start'].replace('Z', '+00:00'))
+                        duration = (next_start - current_end).total_seconds() / 3600
+                    except (ValueError, TypeError):
+                        # Skip invalid datetime strings
+                        continue
                     
                     if duration >= 1:  # At least 1 hour gap
                         free_slots.append({
@@ -379,20 +429,29 @@ class GoogleCalendarService:
                             'type': 'between_events'
                         })
                 
-                # Check evening slot
-                last_event_end = datetime.fromisoformat(sorted_events[-1]['end'].replace('Z', '+00:00'))
-                if last_event_end < day_end:
-                    duration = (day_end - last_event_end).total_seconds() / 3600
-                    if duration >= 1:  # At least 1 hour
-                        free_slots.append({
-                            'start': last_event_end.isoformat(),
-                            'end': day_end.isoformat(),
-                            'duration_hours': duration,
-                            'type': 'evening'
-                        })
-            
+                # Check evening slot - handle timezone properly
+                try:
+                    last_event_end = datetime.fromisoformat(sorted_events[-1]['end'].replace('Z', '+00:00'))
+                    # Ensure both datetimes have same timezone info for comparison
+                    if day_end.tzinfo is None and last_event_end.tzinfo is not None:
+                        day_end = day_end.replace(tzinfo=timezone.utc)
+                    elif day_end.tzinfo is not None and last_event_end.tzinfo is None:
+                        last_event_end = last_event_end.replace(tzinfo=timezone.utc)
+                    
+                    if last_event_end < day_end:
+                        duration = (day_end - last_event_end).total_seconds() / 3600
+                        if duration >= 1:  # At least 1 hour
+                            free_slots.append({
+                                'start': last_event_end.isoformat(),
+                                'end': day_end.isoformat(),
+                                'duration_hours': duration,
+                                'type': 'evening'
+                            })
+                except (ValueError, TypeError):
+                    # Skip invalid datetime strings
+                    pass
+
             current_date += timedelta(days=1)
-        
         return free_slots
     
     def _calculate_availability_score(self, busy_slots: List[Dict[str, Any]], start_date: datetime, end_date: datetime) -> int:
@@ -417,9 +476,13 @@ class GoogleCalendarService:
         
         day_hours = {}
         for slot in busy_slots:
-            date = datetime.fromisoformat(slot['start'].replace('Z', '+00:00')).date()
-            day_name = date.strftime('%A, %B %d')
-            day_hours[day_name] = day_hours.get(day_name, 0) + slot['duration_hours']
+            try:
+                date = datetime.fromisoformat(slot['start'].replace('Z', '+00:00')).date()
+                day_name = date.strftime('%A, %B %d')
+                day_hours[day_name] = day_hours.get(day_name, 0) + slot['duration_hours']
+            except (ValueError, TypeError):
+                # Skip invalid datetime strings
+                continue
         
         return max(day_hours, key=day_hours.get) if day_hours else None
     

@@ -91,8 +91,8 @@ const Account = () => {
 
     // Check if user is authenticated
     if (!isAuthenticated || !authUser) {
-      console.log('🚫 [Account] User not authenticated, redirecting to onboarding');
-      navigate('/onboarding');
+      console.log('🚫 [Account] User not authenticated, redirecting to home page');
+      navigate('/');
       return;
     }
 

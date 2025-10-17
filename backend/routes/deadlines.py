@@ -73,7 +73,7 @@ async def get_deadline_status(
         
         # Find activities with deadlines organized by current user
         from bson import ObjectId
-        from datetime import datetime
+        from datetime import datetime, timezone
         
         cursor = db.activities.find({
             "organizer_id": ObjectId(current_user.id),
@@ -82,7 +82,7 @@ async def get_deadline_status(
         
         activities = await cursor.to_list(length=None)
         
-        current_time = datetime.utcnow()
+        current_time = datetime.now(timezone.utc)
         deadline_info = []
         
         for activity in activities:

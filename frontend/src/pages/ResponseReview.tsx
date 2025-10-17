@@ -67,7 +67,11 @@ const ResponseReview = () => {
     confirmedResponses.forEach(response => {
       if (response.preferences) {
         Object.keys(response.preferences).forEach(pref => {
-          if (response.preferences[pref]) {
+          // Handle both boolean and numeric values (0/1, true/false)
+          const value = response.preferences[pref];
+          const isSelected = Boolean(value) && value !== 0 && value !== '0' && value !== false;
+          
+          if (isSelected) {
             preferences[pref] = (preferences[pref] || 0) + 1;
           }
         });
@@ -368,11 +372,24 @@ const ResponseReview = () => {
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">
-                {topPreferences.map(([pref, count]) => (
-                  <Badge key={pref} variant="outline" className="px-3 py-1">
-                    {pref.charAt(0).toUpperCase() + pref.slice(1)} ({count as number})
-                  </Badge>
-                ))}
+                {topPreferences.map(([pref, count]) => {
+                  const labels = {
+                    indoor: 'Indoor Activities',
+                    outdoor: 'Outdoor Activities',
+                    food: 'Food & Drinks',
+                    sports: 'Sports & Fitness',
+                    culture: 'Culture & Arts',
+                    nightlife: 'Nightlife',
+                    family: 'Family Activities',
+                    adventure: 'Adventure'
+                  };
+                  
+                  return (
+                    <Badge key={pref} variant="outline" className="px-3 py-1">
+                      {labels[pref] || pref.charAt(0).toUpperCase() + pref.slice(1)} ({count as number})
+                    </Badge>
+                  );
+                })}
               </div>
             </CardContent>
           </Card>

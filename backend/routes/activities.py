@@ -369,10 +369,10 @@ async def invite_guests_to_activity(
             }
         )
         
-        # Send email invitations to all new invitees
-        # Temporary solution, sending links to local env during PoC testing, to be removed before launch
+        # Send invitations via selected channel
         notification_service = NotificationService()
-        email_results = []
+        invitation_results = []
+        selected_channel = invite_request.channel or "email"  # Default to email
         
         for invitee_info in invitees_with_user_info:
             invitee = invitee_info["invitee"]
@@ -381,7 +381,7 @@ async def invite_guests_to_activity(
             # Generate invite link for this specific invitee
             invite_link = get_invite_link(activity_id, invitee["email"])
             
-            # Prepare activity details for email
+            # Prepare activity details for invitation
             activity_details = {
                 "selected_date": activity.get("selected_date"),
                 "selected_days": activity.get("selected_days", []),
@@ -391,36 +391,51 @@ async def invite_guests_to_activity(
                 "weather_data": activity.get("weather_data", [])
             }
             
-            # Send email invitation - use different functions for registered vs guest users
-            if existing_user:
-                # Send invitation to registered user
-                email_sent = await notification_service.send_activity_invitation_email(
-                    to_email=invitee["email"],
-                    to_name=invitee["name"],
-                    organizer_name=current_user.name,
-                    activity_title=activity["title"],
-                    activity_description=activity.get("description", ""),
-                    custom_message=invite_request.custom_message,
-                    invite_link=invite_link,
-                    activity_details=activity_details
-                )
-            else:
-                # Send invitation to guest user (non-registered)
-                email_sent = await notification_service.send_activity_invitation_email_to_guest(
-                    to_email=invitee["email"],
-                    to_name=invitee["name"],
-                    organizer_name=current_user.name,
-                    activity_title=activity["title"],
-                    activity_description=activity.get("description", ""),
-                    custom_message=invite_request.custom_message,
-                    invite_link=invite_link,
-                    activity_details=activity_details
-                )
+            invitation_sent = False
             
-            email_results.append({
+            # Send invitation based on selected channel
+            if selected_channel == "email":
+                # Send email invitation - use different functions for registered vs guest users
+                if existing_user:
+                    # Send invitation to registered user
+                    invitation_sent = await notification_service.send_activity_invitation_email(
+                        to_email=invitee["email"],
+                        to_name=invitee["name"],
+                        organizer_name=current_user.name,
+                        activity_title=activity["title"],
+                        activity_description=activity.get("description", ""),
+                        custom_message=invite_request.custom_message,
+                        invite_link=invite_link,
+                        activity_details=activity_details
+                    )
+                else:
+                    # Send invitation to guest user (non-registered)
+                    invitation_sent = await notification_service.send_activity_invitation_email_to_guest(
+                        to_email=invitee["email"],
+                        to_name=invitee["name"],
+                        organizer_name=current_user.name,
+                        activity_title=activity["title"],
+                        activity_description=activity.get("description", ""),
+                        custom_message=invite_request.custom_message,
+                        invite_link=invite_link,
+                        activity_details=activity_details
+                    )
+            elif selected_channel == "whatsapp":
+                # TODO: Implement WhatsApp invitation sending
+                # For now, simulate success
+                invitation_sent = True
+                print(f"WhatsApp invitation would be sent to {invitee['name']} at {invitee.get('phone', 'no phone')}")
+            elif selected_channel == "sms":
+                # TODO: Implement SMS invitation sending
+                # For now, simulate success
+                invitation_sent = True
+                print(f"SMS invitation would be sent to {invitee['name']} at {invitee.get('phone', 'no phone')}")
+            
+            invitation_results.append({
                 "email": invitee["email"],
                 "name": invitee["name"],
-                "email_sent": email_sent
+                "channel": selected_channel,
+                "invitation_sent": invitation_sent
             })
             
             # Create in-app notification if the invitee is a registered user
@@ -428,17 +443,18 @@ async def invite_guests_to_activity(
                 await notification_service.create_notification(
                     db,
                     str(existing_user["_id"]),
-                    f"{current_user.name} invited you to {activity['title']}",
+                    f"{current_user.name} invited you to {activity['title']} via {selected_channel}",
                     "activity_invitation",
                     {
                         "activity_id": activity_id,
                         "organizer_name": current_user.name,
                         "activity_title": activity["title"],
-                        "invite_link": invite_link
+                        "invite_link": invite_link,
+                        "channel": selected_channel
                     }
                 )
         
-        successful_emails = sum(1 for result in email_results if result["email_sent"])
+        successful_invitations = sum(1 for result in invitation_results if result["invitation_sent"])
         
         # Generate a guest experience link for testing (using the first invitee's email if available)
         guest_experience_link = None
@@ -448,11 +464,12 @@ async def invite_guests_to_activity(
                 guest_experience_link = get_invite_link(activity_id, first_invitee_email)
         
         return {
-            "message": "Invitations sent",
+            "message": f"Invitations sent via {selected_channel}",
             "invited_count": len(new_invitees),
-            "emails_sent": successful_emails,
+            "invitations_sent": successful_invitations,
+            "channel": selected_channel,
             "custom_message": invite_request.custom_message,
-            "email_results": email_results,
+            "invitation_results": invitation_results,
             "guest_experience_link": guest_experience_link
         }
         

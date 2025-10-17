@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,6 +18,7 @@ import IntentParser from '@/components/IntentParser';
 import RecommendationGenerator from '@/components/RecommendationGenerator';
 import ThinkingScreen from '@/components/ThinkingScreen';
 import SmartScheduling from '@/components/SmartScheduling';
+import WeatherWidget from '@/components/WeatherWidget';
 import { cn } from '@/lib/utils';
 
 const CreateActivity = () => {
@@ -27,6 +28,7 @@ const CreateActivity = () => {
   const [chatInput, setChatInput] = useState('');
   const [parsedIntent, setParsedIntent] = useState(null);
   const [activity, setActivity] = useState(null);
+  const topRef = useRef(null);
   const [activityData, setActivityData] = useState({
     title: '',
     description: '',
@@ -55,13 +57,20 @@ const CreateActivity = () => {
   const [customSuggestion, setCustomSuggestion] = useState('');
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   
+  // Track failed image URLs to prevent infinite loops
+  const failedImages = useRef(new Set());
+  
+  // State for "Get Ideas" tab
+  const [selectedIdea, setSelectedIdea] = useState(null);
+  const [startingTab, setStartingTab] = useState('create'); // Track which tab user started from
+  
   // Smart scheduling state
   const [showSmartScheduling, setShowSmartScheduling] = useState(false);
   const [selectedSchedulingTime, setSelectedSchedulingTime] = useState(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
-      navigate('/onboarding');
+      navigate('/');
     }
     
     // Handle incoming state from WeatherPlanning
@@ -100,14 +109,35 @@ const CreateActivity = () => {
   const handleChatSubmit = async () => {
     if (!chatInput.trim()) return;
 
+    // Track starting tab for navigation
+    setStartingTab('create');
     // Show thinking screen first
+    setStep('thinking');
+  };
+
+  const handleIdeaSelection = async (selectedRecommendation) => {
+    // Store the selected idea
+    setSelectedIdea(selectedRecommendation);
+    
+    // Track starting tab for navigation
+    setStartingTab('recommendations');
+    
+    // Use the selected recommendation as input for intent parsing
+    setChatInput(selectedRecommendation.description || selectedRecommendation.title);
+    
+    // Show thinking screen and parse the selected idea
     setStep('thinking');
   };
 
   const handleThinkingComplete = async () => {
     setIsLoading(true);
     try {
-      const response = await apiService.parseIntent(chatInput.trim());
+      // Use the selected idea or chat input for parsing
+      const inputText = selectedIdea ?
+        (selectedIdea.description || selectedIdea.title) :
+        chatInput.trim();
+      
+      const response = await apiService.parseIntent(inputText);
       
       if (response.data && response.data.success) {
         const intentData = response.data.data;
@@ -186,6 +216,23 @@ const CreateActivity = () => {
     }
   };
 
+  // Focus management effect for step changes
+  useEffect(() => {
+    if (step === 'review') {
+      // Ensure we start at the top of the page immediately
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      
+      // Focus on the top container after a brief delay to ensure DOM is ready
+      const focusTimer = setTimeout(() => {
+        if (topRef.current) {
+          topRef.current.focus({ preventScroll: true });
+        }
+      }, 100);
+      
+      return () => clearTimeout(focusTimer);
+    }
+  }, [step]);
+
   const handleSuggestionsChoice = (choice) => {
     if (choice === 'suggestions') {
       setStep('suggestions');
@@ -225,30 +272,39 @@ const CreateActivity = () => {
     
     setIsLoadingSuggestions(true);
     try {
-      // Use enhanced data from intent parsing
-      const requestData = {
-        activity_description: activity?.description || activityData.description,
+      // Use "specific" suggestion type for after planning - venue-based suggestions
+      const query = `${activity?.description || activityData.description} - looking for specific venues and actionable recommendations`;
+      
+      const options = {
+        suggestion_type: "specific",
         date: activity?.selected_date || activityData.selectedDate,
         indoor_outdoor_preference: activity?.weather_preference || activityData.indoorOutdoorPreference,
+        location: user?.location || activityData.location || "Amsterdam", // Use user profile location first
         group_size: activity?.group_size ?
                    parseInt(activity.group_size) :
                    (activityData.groupSize && !isNaN(parseInt(activityData.groupSize)) ?
-                    parseInt(activityData.groupSize) : undefined),
-        // Enhanced context from intent parsing
-        activity_type: activityData.activityType,
-        mood: activityData.mood,
-        budget: activityData.budget,
-        duration: activityData.duration,
-        location: activityData.location,
-        requirements: activityData.requirements,
-        specific_people: activityData.specificPeople
+                    parseInt(activityData.groupSize) : undefined)
       };
 
-      const response = await apiService.generateSuggestions(requestData);
+      const response = await apiService.getRecommendations(query, 5, options);
 
       if (response.data && response.data.success) {
-        setSuggestions(response.data.suggestions || []);
-        if (response.data.suggestions?.length === 0) {
+        // Convert recommendations to suggestions format
+        const convertedSuggestions = response.data.recommendations.map(rec => ({
+          title: rec.title,
+          description: rec.description,
+          category: rec.category,
+          duration: rec.duration,
+          difficulty: rec.difficulty,
+          budget: rec.budget,
+          indoor_outdoor: rec.indoor_outdoor,
+          group_size: rec.group_size,
+          tips: rec.tips,
+          venue: rec.venue
+        }));
+        
+        setSuggestions(convertedSuggestions);
+        if (convertedSuggestions.length === 0) {
           showError('No suggestions could be generated. Try adjusting your activity description.');
         }
       } else {
@@ -359,7 +415,8 @@ const CreateActivity = () => {
         };
 
         showSuccess('Activity created successfully with AI insights!');
-        navigate('/weather-planning', { state: { activity: enhancedActivity } });
+        setActivity(enhancedActivity);
+        setStep('suggestions-pre-invites');
       } else {
         showError(response.error || 'Failed to create activity');
       }
@@ -405,7 +462,7 @@ const CreateActivity = () => {
         </div>
       </header>
 
-      <div className="container mx-auto px-4 py-8 max-w-2xl">
+      <div className="container mx-auto px-4 py-8 max-w-2xl" ref={topRef} tabIndex={0} role="main" aria-label="Activity Planning Form">
         {step === 'chat' && (
           <Tabs defaultValue="create" className="w-full">
             <TabsList className={`grid w-full ${user?.role === 'admin' ? 'grid-cols-3' : 'grid-cols-2'}`}>
@@ -483,7 +540,7 @@ const CreateActivity = () => {
                       className="w-full"
                       style={{ backgroundColor: '#1155cc', color: 'white' }}
                     >
-                      Activity Description
+                      Activity Planning
                     </Button>
                   </div>
                 </CardContent>
@@ -491,7 +548,9 @@ const CreateActivity = () => {
             </TabsContent>
             
             <TabsContent value="recommendations" className="mt-6">
-              <RecommendationGenerator />
+              <RecommendationGenerator
+                onContinueWithSelection={handleIdeaSelection}
+              />
             </TabsContent>
             
             {user?.role === 'admin' && (
@@ -558,7 +617,7 @@ const CreateActivity = () => {
                   I understood your idea!
                 </CardTitle>
                 <CardDescription>
-                  Here's what I gathered from your description. Please check and edit if needed.
+                  Here's what I gathered from your description. Check the details and weather forecast below.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -657,42 +716,41 @@ const CreateActivity = () => {
                   </h4>
                   
                   <div className="grid gap-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Indoor/Outdoor Preference</label>
-                        <div className="flex gap-2">
-                          {['indoor', 'outdoor', 'either'].map((pref) => (
-                            <Button
-                              key={pref}
-                              variant={activityData.indoorOutdoorPreference === pref ? "default" : "outline"}
-                              size="sm"
-                              onClick={() => setActivityData(prev => ({ ...prev, indoorOutdoorPreference: pref }))}
-                              className="flex items-center gap-1"
-                            >
-                              {pref === 'indoor' && <Home className="w-3 h-3" />}
-                              {pref === 'outdoor' && <TreePine className="w-3 h-3" />}
-                              {pref === 'either' && <Star className="w-3 h-3" />}
-                              {pref.charAt(0).toUpperCase() + pref.slice(1)}
-                            </Button>
-                          ))}
-                        </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Indoor/Outdoor Preference</label>
+                      <div className="flex flex-wrap gap-2">
+                        {['indoor', 'outdoor', 'either'].map((pref) => (
+                          <Button
+                            key={pref}
+                            variant={activityData.indoorOutdoorPreference === pref ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setActivityData(prev => ({ ...prev, indoorOutdoorPreference: pref }))}
+                            className="flex items-center gap-1"
+                          >
+                            {pref === 'indoor' && <Home className="w-3 h-3" />}
+                            {pref === 'outdoor' && <TreePine className="w-3 h-3" />}
+                            {pref === 'either' && <Star className="w-3 h-3" />}
+                            {pref.charAt(0).toUpperCase() + pref.slice(1)}
+                          </Button>
+                        ))}
                       </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Budget Level</label>
-                        <div className="flex gap-2">
-                          {['free', 'low', 'medium', 'high'].map((budget) => (
-                            <Button
-                              key={budget}
-                              variant={activityData.budget === budget ? "default" : "outline"}
-                              size="sm"
-                              onClick={() => setActivityData(prev => ({ ...prev, budget }))}
-                              className="flex items-center gap-1"
-                            >
-                              <DollarSign className="w-3 h-3" />
-                              {budget.charAt(0).toUpperCase() + budget.slice(1)}
-                            </Button>
-                          ))}
-                        </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Budget Level</label>
+                      <div className="flex flex-wrap gap-2">
+                        {['free', 'low', 'medium', 'high'].map((budget) => (
+                          <Button
+                            key={budget}
+                            variant={activityData.budget === budget ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setActivityData(prev => ({ ...prev, budget }))}
+                            className="flex items-center gap-1 min-w-0"
+                          >
+                            <DollarSign className="w-3 h-3" />
+                            {budget.charAt(0).toUpperCase() + budget.slice(1)}
+                          </Button>
+                        ))}
                       </div>
                     </div>
 
@@ -783,82 +841,51 @@ const CreateActivity = () => {
                   </div>
                 )}
 
-                {/* Response Deadline */}
-                <div className="space-y-4">
-                  <h4 className="font-semibold text-gray-900 flex items-center gap-2">
-                    <Clock className="w-4 h-4" />
-                    Response Deadline
-                  </h4>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="deadline">Response Deadline (Optional)</Label>
-                    <div className="flex gap-2">
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            id="deadline"
-                            variant="outline"
-                            className={cn(
-                              "flex-1 justify-start text-left font-normal",
-                              !deadlineDate && "text-muted-foreground"
-                            )}
-                          >
-                            <Clock className="mr-2 h-4 w-4" />
-                            {deadlineDate ? format(deadlineDate, "PPP 'at' p") : "Set response deadline"}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={deadlineDate}
-                            onSelect={setDeadlineDate}
-                            disabled={(date) => date < new Date()}
-                            initialFocus
-                          />
-                          {deadlineDate && (
-                            <div className="p-3 border-t">
-                              <Label htmlFor="deadline-time" className="text-sm font-medium">Time</Label>
-                              <Input
-                                id="deadline-time"
-                                type="time"
-                                className="mt-1"
-                                onChange={(e) => {
-                                  if (deadlineDate && e.target.value) {
-                                    const [hours, minutes] = e.target.value.split(':');
-                                    const newDate = new Date(deadlineDate);
-                                    newDate.setHours(parseInt(hours), parseInt(minutes));
-                                    setDeadlineDate(newDate);
-                                  }
-                                }}
-                                value={deadlineDate ? format(deadlineDate, 'HH:mm') : ''}
-                              />
-                            </div>
-                          )}
-                        </PopoverContent>
-                      </Popover>
-                      {deadlineDate && (
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={() => setDeadlineDate(undefined)}
-                          className="shrink-0"
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                    <p className="text-xs text-gray-500">
-                      Set a deadline for when you need responses from invitees. You'll get notifications as the deadline approaches.
-                    </p>
+              </CardContent>
+            </Card>
+
+            {/* Weather Planning Section - Integrated */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Cloud className="w-5 h-5 text-blue-600" />
+                  Weather Planning
+                </CardTitle>
+                <CardDescription>
+                  Check the weather forecast and plan accordingly for your activity.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {/* Lazy load weather widget to prevent focus interference */}
+                {step === 'review' && (
+                  <div style={{ minHeight: '200px' }}>
+                    <WeatherWidget
+                      latitude={52.3676}
+                      longitude={4.9041}
+                      title="Amsterdam Weather"
+                      showForecast={true}
+                      compact={false}
+                    />
                   </div>
-                </div>
+                )}
               </CardContent>
             </Card>
 
             <div className="flex gap-3">
               <Button
                 variant="outline"
-                onClick={() => setStep('chat')}
+                onClick={() => {
+                  // Navigate back to the tab where user started
+                  if (startingTab === 'recommendations') {
+                    // If they started from Get Ideas, go back to that tab
+                    setStep('chat');
+                    // Reset the selected idea
+                    setSelectedIdea(null);
+                  } else {
+                    // If they started from Create Activity, go back to that tab
+                    setStep('chat');
+                  }
+                }}
                 className="flex-1"
                 style={{ borderColor: '#1155cc', color: '#1155cc' }}
               >
@@ -876,7 +903,7 @@ const CreateActivity = () => {
                     Creating...
                   </>
                 ) : (
-                  'Continue to Weather Planning'
+                  'Activity Planning'
                 )}
               </Button>
             </div>
@@ -937,7 +964,7 @@ const CreateActivity = () => {
             <div className="flex gap-3">
               <Button
                 variant="outline"
-                onClick={() => navigate('/weather-planning', { state: { activity } })}
+                onClick={() => setStep('review')}
                 className="flex-1"
                 style={{ borderColor: '#1155cc', color: '#1155cc' }}
               >
@@ -968,14 +995,23 @@ const CreateActivity = () => {
                 requirements: activityData.requirements
               }}
               participants={
-                // Use parsed specific people if available, otherwise use existing invitees
-                activityData.specificPeople.length > 0
-                  ? activityData.specificPeople.map(name => ({
-                      name,
-                      email: '', // Will be filled later
-                      id: `temp-${name.toLowerCase().replace(/\s+/g, '-')}`
-                    }))
-                  : (activity.invitees || [])
+                // Always include the organizer as the first participant
+                [
+                  {
+                    id: user?.id || 'organizer',
+                    name: user?.name || 'Organizer',
+                    email: user?.email || '',
+                    google_calendar_credentials: user?.google_calendar_credentials || null
+                  },
+                  // Add parsed specific people if available
+                  ...activityData.specificPeople.map(name => ({
+                    name,
+                    email: '', // Will be filled later
+                    id: `temp-${name.toLowerCase().replace(/\s+/g, '-')}`
+                  })),
+                  // Add existing invitees if available
+                  ...(activity.invitees || [])
+                ]
               }
               onSuggestionSelect={handleSmartSchedulingSelect}
               onClose={() => setShowSmartScheduling(false)}
@@ -1088,6 +1124,90 @@ const CreateActivity = () => {
                                       )}
                                     </div>
                                     <p className="text-gray-600 text-sm mb-3">{suggestion.description}</p>
+                                    
+                                    {/* Venue Information */}
+                                    {suggestion.venue && (
+                                      <div className="bg-gray-50 rounded-lg p-3 mb-3">
+                                        <div className="flex items-start gap-3">
+                                          {suggestion.venue.image_url && (
+                                            <img
+                                              src={suggestion.venue.image_url}
+                                              alt={suggestion.venue.name}
+                                              className="w-16 h-16 rounded-lg object-cover flex-shrink-0"
+                                              onError={(e) => {
+                                                const currentSrc = e.currentTarget.src;
+                                                
+                                                // Prevent infinite loop by tracking failed URLs
+                                                if (failedImages.current.has(currentSrc)) {
+                                                  // Hide the image completely if fallback also fails
+                                                  e.currentTarget.style.display = 'none';
+                                                  return;
+                                                }
+                                                
+                                                // Add current URL to failed set
+                                                failedImages.current.add(currentSrc);
+                                                
+                                                // Use a reliable fallback - data URL with initials
+                                                const initials = suggestion.venue.name.substring(0, 2).toUpperCase();
+                                                const canvas = document.createElement('canvas');
+                                                canvas.width = 64;
+                                                canvas.height = 64;
+                                                const ctx = canvas.getContext('2d');
+                                                
+                                                // Create a simple colored background with initials
+                                                ctx.fillStyle = '#e5e7eb';
+                                                ctx.fillRect(0, 0, 64, 64);
+                                                ctx.fillStyle = '#6b7280';
+                                                ctx.font = '20px Arial';
+                                                ctx.textAlign = 'center';
+                                                ctx.textBaseline = 'middle';
+                                                ctx.fillText(initials, 32, 32);
+                                                
+                                                // Set the data URL as fallback
+                                                e.currentTarget.src = canvas.toDataURL();
+                                              }}
+                                            />
+                                          )}
+                                          <div className="flex-1 min-w-0">
+                                            <h6 className="font-medium text-gray-900 text-sm">{suggestion.venue.name}</h6>
+                                            <p className="text-xs text-gray-600 mb-1">{suggestion.venue.address}</p>
+                                            <div className="flex items-center gap-2 mb-1">
+                                              {suggestion.venue.rating && (
+                                                <span className="text-xs text-yellow-600 font-medium">
+                                                  ⭐ {suggestion.venue.rating}
+                                                </span>
+                                              )}
+                                              {suggestion.venue.price_range && (
+                                                <span className="text-xs text-green-600 font-medium">
+                                                  {suggestion.venue.price_range}
+                                                </span>
+                                              )}
+                                            </div>
+                                            {suggestion.venue.features && suggestion.venue.features.length > 0 && (
+                                              <div className="flex flex-wrap gap-1">
+                                                {suggestion.venue.features.slice(0, 2).map((feature, idx) => (
+                                                  <span key={idx} className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                                                    {feature}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                          {suggestion.venue.link && (
+                                            <a
+                                              href={suggestion.venue.link}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-blue-600 hover:text-blue-800 text-xs"
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              View →
+                                            </a>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                    
                                     <div className="flex flex-wrap gap-2">
                                       <Badge variant="secondary" className="text-xs">
                                         {suggestion.duration}

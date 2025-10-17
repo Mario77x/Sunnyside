@@ -150,10 +150,12 @@ const InviteeActivitySummary = () => {
                 <h4 className="font-medium text-sm text-gray-600 mb-1">Selected Days</h4>
                 <p>{capitalizedDays}</p>
               </div>
-              <div>
-                <h4 className="font-medium text-sm text-gray-600 mb-1">Weather Preference</h4>
-                <Badge variant="outline">{activity.weather_preference}</Badge>
-              </div>
+              {activity.selected_date && (
+                <div>
+                  <h4 className="font-medium text-sm text-gray-600 mb-1">Weather Preference</h4>
+                  <Badge variant="outline">{activity.weather_preference}</Badge>
+                </div>
+              )}
             </div>
 
             {activity.selected_date && (
@@ -241,7 +243,10 @@ const InviteeActivitySummary = () => {
                 </h4>
                 <div className="flex flex-wrap gap-2">
                   {Object.entries(userResponse.preferences).map(([key, value]) => {
-                    if (value) {
+                    // Handle both boolean and numeric values (0/1, true/false)
+                    const isSelected = Boolean(value) && value !== 0 && value !== '0' && value !== false;
+                    
+                    if (isSelected) {
                       const labels = {
                         indoor: 'Indoor Activities',
                         outdoor: 'Outdoor Activities',

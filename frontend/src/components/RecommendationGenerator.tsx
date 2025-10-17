@@ -9,12 +9,14 @@ import { apiService } from '@/services/api';
 
 interface RecommendationGeneratorProps {
   onRecommendationSelect?: (recommendation: any) => void;
+  onContinueWithSelection?: (selectedRecommendation: any) => void;
   className?: string;
 }
 
-const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({ 
-  onRecommendationSelect, 
-  className = '' 
+const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
+  onRecommendationSelect,
+  onContinueWithSelection,
+  className = ''
 }) => {
   const [query, setQuery] = useState('');
   const [recommendations, setRecommendations] = useState<any[]>([]);
@@ -32,7 +34,10 @@ const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
     setMetadata(null);
 
     try {
-      const response = await apiService.getRecommendations(query.trim(), 5);
+      // Use "general" suggestion type for Get Ideas tab - inspirational suggestions
+      const response = await apiService.getRecommendations(query.trim(), 5, {
+        suggestion_type: "general"
+      });
       
       if (response.data && response.data.success) {
         // Append new recommendations instead of replacing
@@ -62,6 +67,12 @@ const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
     }
   };
 
+  const handleContinueWithSelection = () => {
+    if (selectedRecommendation && onContinueWithSelection) {
+      onContinueWithSelection(selectedRecommendation);
+    }
+  };
+
   const clearResults = () => {
     setRecommendations([]);
     setSelectedRecommendation(null);
@@ -77,7 +88,10 @@ const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
     setError(null);
 
     try {
-      const response = await apiService.getRecommendations(query.trim(), 3);
+      // Use "general" suggestion type for Get Ideas tab - inspirational suggestions
+      const response = await apiService.getRecommendations(query.trim(), 3, {
+        suggestion_type: "general"
+      });
       
       if (response.data && response.data.success) {
         // Append new recommendations to existing ones
@@ -132,23 +146,6 @@ const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
                 )}
               </Button>
               
-              {recommendations.length > 0 && (
-                <Button
-                  onClick={generateMoreRecommendations}
-                  disabled={isLoading}
-                  variant="outline"
-                  style={{ borderColor: '#1155cc', color: '#1155cc' }}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Getting More...
-                    </>
-                  ) : (
-                    'Generate More'
-                  )}
-                </Button>
-              )}
               
               {(recommendations.length > 0 || error) && (
                 <Button
@@ -183,87 +180,195 @@ const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
             <div className="space-y-4">
               <h3 className="font-semibold text-lg">Recommendations</h3>
               <div className="grid gap-4">
-                {recommendations.map((recommendation, index) => (
-                  <Card 
-                    key={index}
-                    className={`cursor-pointer transition-all hover:shadow-md ${
-                      selectedRecommendation === recommendation 
-                        ? 'ring-2 ring-blue-500 bg-blue-50' 
-                        : ''
-                    }`}
-                    onClick={() => handleSelectRecommendation(recommendation)}
-                  >
-                    <CardContent className="p-4">
-                      <div className="space-y-3">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <h4 className="font-semibold text-lg">{recommendation.title}</h4>
-                            <p className="text-sm text-gray-600 mt-1">{recommendation.description}</p>
+                {recommendations.map((recommendation, index) => {
+                  // Handle text_response type (raw LLM response fallback)
+                  if (recommendation.type === "text_response") {
+                    return (
+                      <Alert key={index} className="border-orange-200 bg-orange-50">
+                        <AlertCircle className="h-4 w-4 text-orange-600" />
+                        <AlertDescription className="text-orange-800">
+                          <div className="space-y-2">
+                            <p className="font-medium">Raw Response (Parsing Failed):</p>
+                            <div className="text-sm whitespace-pre-wrap bg-white p-3 rounded border">
+                              {recommendation.description}
+                            </div>
+                            <p className="text-xs text-orange-600">
+                              The AI response couldn't be parsed into structured recommendations. Please try rephrasing your query.
+                            </p>
                           </div>
-                          {selectedRecommendation === recommendation && (
-                            <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center flex-shrink-0 ml-2">
-                              <div className="w-2 h-2 bg-white rounded-full"></div>
+                        </AlertDescription>
+                      </Alert>
+                    );
+                  }
+
+                  // Handle fallback type (improved fallback with structured format)
+                  if (recommendation.type === "fallback") {
+                    return (
+                      <Alert key={index} className="border-yellow-200 bg-yellow-50">
+                        <AlertCircle className="h-4 w-4 text-yellow-600" />
+                        <AlertDescription className="text-yellow-800">
+                          <div className="space-y-2">
+                            <p className="font-medium">Parsing Issue Detected</p>
+                            <p className="text-sm">
+                              The AI provided a response but it couldn't be parsed into the expected format.
+                              Here's a simplified version:
+                            </p>
+                            <div className="bg-white p-3 rounded border">
+                              <h4 className="font-medium text-gray-900">{recommendation.title}</h4>
+                              <p className="text-sm text-gray-600 mt-1">{recommendation.description}</p>
+                              <div className="flex flex-wrap gap-2 mt-2">
+                                <Badge variant="outline">{recommendation.category}</Badge>
+                                <Badge variant="outline">{recommendation.duration}</Badge>
+                                <Badge variant="outline">{recommendation.budget}</Badge>
+                              </div>
+                              {recommendation.tips && (
+                                <p className="text-sm text-gray-600 italic mt-2">💡 {recommendation.tips}</p>
+                              )}
+                            </div>
+                            <p className="text-xs text-yellow-600">
+                              Try being more specific in your request for better structured recommendations.
+                            </p>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+                    );
+                  }
+
+                  // Handle normal structured recommendations
+                  return (
+                    <Card
+                      key={index}
+                      className={`cursor-pointer transition-all hover:shadow-md ${
+                        selectedRecommendation === recommendation
+                          ? 'ring-2 ring-blue-500 bg-blue-50'
+                          : ''
+                      }`}
+                      onClick={() => handleSelectRecommendation(recommendation)}
+                    >
+                      <CardContent className="p-4">
+                        <div className="space-y-3">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <h4 className="font-semibold text-lg">{recommendation.title || 'Untitled Activity'}</h4>
+                              <p className="text-sm text-gray-600 mt-1">{recommendation.description || 'No description available'}</p>
+                            </div>
+                            {selectedRecommendation === recommendation && (
+                              <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center flex-shrink-0 ml-2">
+                                <div className="w-2 h-2 bg-white rounded-full"></div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            {recommendation.category && <Badge variant="outline">{recommendation.category}</Badge>}
+                            {recommendation.duration && <Badge variant="outline">{recommendation.duration}</Badge>}
+                            {recommendation.budget && <Badge variant="outline">{recommendation.budget}</Badge>}
+                            {recommendation.indoor_outdoor && <Badge variant="outline">{recommendation.indoor_outdoor}</Badge>}
+                          </div>
+
+                          {recommendation.venue && (
+                            <div className="bg-gray-50 p-3 rounded-md">
+                               <div className="flex items-start gap-3">
+                                 {/* Image on the left */}
+                                 {recommendation.venue.image_url && (
+                                   <div className="flex-shrink-0">
+                                     <div className="w-[200px] h-[200px] bg-gray-200 rounded-lg overflow-hidden">
+                                       <img
+                                         src={recommendation.venue.image_url}
+                                         alt={recommendation.venue.name}
+                                         className="w-full h-full object-cover"
+                                         onError={(e) => {
+                                           const target = e.target as HTMLImageElement;
+                                           target.style.display = 'none';
+                                           // Show a placeholder instead
+                                           const parent = target.parentElement;
+                                           if (parent) {
+                                             parent.innerHTML = '<div class="w-full h-full bg-gray-300 flex items-center justify-center text-gray-500 text-sm">No image</div>';
+                                           }
+                                         }}
+                                         onLoad={(e) => {
+                                           const target = e.target as HTMLImageElement;
+                                           target.style.display = 'block';
+                                         }}
+                                       />
+                                     </div>
+                                   </div>
+                                 )}
+                                 
+                                 {/* Text content on the right */}
+                                 <div className="flex-1 min-w-0">
+                                   <div className="flex items-start justify-between">
+                                     <div className="flex-1">
+                                       <h5 className="font-medium">{recommendation.venue.name}</h5>
+                                       <div className="flex items-center gap-1 text-sm text-gray-600 mt-1">
+                                         <MapPin className="w-3 h-3" />
+                                         <span>{recommendation.venue.address}</span>
+                                       </div>
+                                     </div>
+                                     {recommendation.venue.link && (
+                                       <Button
+                                         variant="ghost"
+                                         size="sm"
+                                         onClick={(e) => {
+                                           e.stopPropagation();
+                                           window.open(recommendation.venue.link, '_blank');
+                                         }}
+                                         className="flex-shrink-0"
+                                       >
+                                         <ExternalLink className="w-3 h-3" />
+                                       </Button>
+                                     )}
+                                   </div>
+                                 </div>
+                               </div>
+                             </div>
+                          )}
+
+                          {recommendation.tips && (
+                            <div className="text-sm text-gray-600 italic">
+                              💡 {recommendation.tips}
                             </div>
                           )}
                         </div>
-
-                        <div className="flex flex-wrap gap-2">
-                          <Badge variant="outline">{recommendation.category}</Badge>
-                          <Badge variant="outline">{recommendation.duration}</Badge>
-                          <Badge variant="outline">{recommendation.budget}</Badge>
-                          <Badge variant="outline">{recommendation.indoor_outdoor}</Badge>
-                        </div>
-
-                        {recommendation.venue && (
-                          <div className="bg-gray-50 p-3 rounded-md space-y-2">
-                             <div className="flex items-start justify-between">
-                               <div className="flex-1">
-                                 <h5 className="font-medium">{recommendation.venue.name}</h5>
-                                 <div className="flex items-center gap-1 text-sm text-gray-600 mt-1">
-                                   <MapPin className="w-3 h-3" />
-                                   <span>{recommendation.venue.address}</span>
-                                 </div>
-                               </div>
-                               {recommendation.venue.link && (
-                                 <Button
-                                   variant="ghost"
-                                   size="sm"
-                                   onClick={(e) => {
-                                     e.stopPropagation();
-                                     window.open(recommendation.venue.link, '_blank');
-                                   }}
-                                   className="flex-shrink-0"
-                                 >
-                                   <ExternalLink className="w-3 h-3" />
-                                 </Button>
-                               )}
-                             </div>
-                             {recommendation.venue.image_url && (
-                               <div className="aspect-video bg-gray-200 rounded-lg overflow-hidden">
-                                 <img
-                                   src={recommendation.venue.image_url}
-                                   alt={recommendation.venue.name}
-                                   className="w-full h-full object-cover"
-                                   onError={(e) => {
-                                     const target = e.target as HTMLImageElement;
-                                     target.style.display = 'none';
-                                   }}
-                                 />
-                               </div>
-                             )}
-                           </div>
-                        )}
-
-                        {recommendation.tips && (
-                          <div className="text-sm text-gray-600 italic">
-                            💡 {recommendation.tips}
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
+              
+              {/* Get More Button - appears under the recommendations list */}
+              {recommendations.length > 0 && (
+                <div className="text-center mt-4">
+                  <Button
+                    onClick={generateMoreRecommendations}
+                    disabled={isLoading}
+                    variant="outline"
+                    style={{ borderColor: '#1155cc', color: '#1155cc' }}
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Getting More...
+                      </>
+                    ) : (
+                      'Get More'
+                    )}
+                  </Button>
+                </div>
+              )}
+              
+              {/* Continue Button - appears when a recommendation is selected */}
+              {selectedRecommendation && onContinueWithSelection && (
+                <div className="mt-6 pt-4 border-t">
+                  <Button
+                    onClick={handleContinueWithSelection}
+                    className="w-full"
+                    style={{ backgroundColor: '#1155cc', color: 'white' }}
+                  >
+                    Activity Planning
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 
@@ -275,8 +380,7 @@ const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
                 {[
                   "any ideas for a fun night out?",
                   "outdoor activities for families with kids",
-                  "romantic dinner spots for couples",
-                  "team building activities for work colleagues"
+                  "romantic dinner spots for couples"
                 ].map((suggestion, index) => (
                   <Button
                     key={index}

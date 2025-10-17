@@ -143,6 +143,7 @@ async def get_public_activity(
             title=activity["title"],
             description=activity.get("description"),
             organizer_name=organizer_name,
+            organizer_id=str(activity["organizer_id"]),
             selected_date=activity.get("selected_date"),
             selected_days=activity.get("selected_days", []),
             activity_type=activity.get("activity_type"),

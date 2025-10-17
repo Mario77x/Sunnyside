@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -6,7 +6,7 @@ import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Cloud, Sun, CloudRain, Calendar as CalendarIcon, ThumbsUp, AlertTriangle, Info, Users, Loader2, CloudSnow, Zap, Eye, CloudDrizzle, Clock, X } from 'lucide-react';
+import { ArrowLeft, Cloud, Sun, CloudRain, Calendar as CalendarIcon, ThumbsUp, AlertTriangle, Info, Users, Loader2, CloudSnow, Zap, Eye, CloudDrizzle, Clock, X, DollarSign } from 'lucide-react';
 import { format, addHours, addDays } from 'date-fns';
 import { calculateDeadline, getDeadlineText, getDeadlineStatus } from '@/utils/deadlineCalculator';
 import { showError, showSuccess } from '@/utils/toast';
@@ -25,16 +25,36 @@ const WeatherPlanning = () => {
   const [selectedDate, setSelectedDate] = useState(null);
   const [weatherPreference, setWeatherPreference] = useState('either');
   const [groupSize, setGroupSize] = useState('');
+  const [budgetLevel, setBudgetLevel] = useState('');
   const [isLoadingWeather, setIsLoadingWeather] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deadline, setDeadline] = useState(null);
   const [useCustomDeadline, setUseCustomDeadline] = useState(false);
+  const topRef = useRef(null);
 
   useEffect(() => {
     if (location.state?.activity) {
       setActivity(location.state.activity);
-      // Load weather data immediately on component mount
-      loadWeatherData();
+      
+      // Ensure we start at the top of the page immediately
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      
+      // Focus on the top container after a brief delay to ensure DOM is ready
+      const focusTimer = setTimeout(() => {
+        if (topRef.current) {
+          topRef.current.focus({ preventScroll: true });
+        }
+      }, 50);
+      
+      // Load weather data in background with a longer delay to prevent focus interference
+      const weatherTimer = setTimeout(() => {
+        loadWeatherData();
+      }, 500);
+      
+      return () => {
+        clearTimeout(focusTimer);
+        clearTimeout(weatherTimer);
+      };
     } else {
       navigate('/');
     }
@@ -498,6 +518,7 @@ const WeatherPlanning = () => {
       selected_date: selectedDate?.toISOString(),
       weather_preference: weatherPreference,
       group_size: groupSize,
+      budget_level: budgetLevel,
       selected_days: selectedDays.length > 0 ? selectedDays : [activity.timeframe],
       weather_data: weatherData,
       deadline: finalDeadline?.toISOString(),
@@ -568,7 +589,7 @@ const WeatherPlanning = () => {
         </div>
       </header>
 
-      <div className="container mx-auto px-4 py-8 max-w-4xl">
+      <div className="container mx-auto px-4 py-8 max-w-4xl" ref={topRef} tabIndex={0} role="main" aria-label="Activity Planning Form">
         <div className="space-y-6">
           {/* Activity Summary */}
           <Card className="mb-6">
@@ -646,6 +667,27 @@ const WeatherPlanning = () => {
                       onClick={() => setWeatherPreference(pref)}
                     >
                       {pref.charAt(0).toUpperCase() + pref.slice(1)}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              {/* Budget Level */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <DollarSign className="w-4 h-4" />
+                  Budget Level
+                </label>
+                <div className="flex gap-2 flex-wrap">
+                  {['free', 'low', 'medium', 'high'].map((budget) => (
+                    <Badge
+                      key={budget}
+                      variant={budgetLevel === budget ? "default" : "outline"}
+                      className="cursor-pointer px-3 py-1"
+                      onClick={() => setBudgetLevel(budget)}
+                    >
+                      <DollarSign className="w-3 h-3 mr-1" />
+                      {budget.charAt(0).toUpperCase() + budget.slice(1)}
                     </Badge>
                   ))}
                 </div>

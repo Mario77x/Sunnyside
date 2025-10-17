@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 from backend.auth import get_current_user, security
-from backend.services.weather import get_weather_forecast, get_current_weather
+from backend.services.weather import WeatherService, get_weather_service
 
 router = APIRouter(prefix="/weather", tags=["weather"])
 
@@ -48,50 +48,50 @@ class CurrentWeatherResponse(BaseModel):
 
 @router.get("/forecast", response_model=WeatherResponse)
 async def get_weather_forecast_endpoint(
-    latitude: float = Query(..., ge=-90, le=90, description="Latitude coordinate"),
-    longitude: float = Query(..., ge=-180, le=180, description="Longitude coordinate"),
-    days: int = Query(7, ge=1, le=14, description="Number of forecast days")
+    latitude: Optional[float] = Query(None, ge=-90, le=90, description="Latitude coordinate"),
+    longitude: Optional[float] = Query(None, ge=-180, le=180, description="Longitude coordinate"),
+    location: Optional[str] = Query(None, description="City name for weather forecast"),
+    days: int = Query(7, ge=1, le=14, description="Number of forecast days"),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    weather_service: WeatherService = Depends(get_weather_service)
 ):
     """
     Get weather forecast for a specific location.
     
-    Public endpoint - no authentication required. Fetches weather forecast data from KNMI API
-    for the specified coordinates and number of days.
+    Prioritizes coordinates if provided, otherwise uses location string.
+    If no location is provided, falls back to the authenticated user's profile location.
     
     Args:
-        latitude: Latitude coordinate (-90 to 90)
-        longitude: Longitude coordinate (-180 to 180)
-        days: Number of forecast days (1 to 14, default: 7)
+        latitude: Optional latitude coordinate
+        longitude: Optional longitude coordinate
+        location: Optional city name
+        days: Number of forecast days
         
     Returns:
-        Weather forecast data including location info and daily forecasts
+        Weather forecast data
     """
     try:
-        # Validate coordinates
-        if not (-90 <= latitude <= 90):
+        current_user = await get_current_user(credentials, db)
+        
+        if latitude is not None and longitude is not None:
+            weather_data = await weather_service.get_weather_forecast(latitude=latitude, longitude=longitude, days=days)
+        elif location:
+            latitude, longitude = await weather_service.get_coordinates_from_location(location)
+            weather_data = await weather_service.get_weather_forecast(latitude=latitude, longitude=longitude, days=days)
+        elif current_user and current_user.location:
+            latitude, longitude = await weather_service.get_coordinates_from_location(current_user.location)
+            weather_data = await weather_service.get_weather_forecast(latitude=latitude, longitude=longitude, days=days)
+        else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Latitude must be between -90 and 90"
+                detail="Location information required (coordinates or city name)"
             )
-        
-        if not (-180 <= longitude <= 180):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Longitude must be between -180 and 180"
-            )
-        
-        # Fetch weather forecast
-        weather_data = await get_weather_forecast(latitude, longitude, days)
-        
+            
         return WeatherResponse(**weather_data)
         
     except HTTPException:
         raise
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -101,48 +101,48 @@ async def get_weather_forecast_endpoint(
 
 @router.get("/current", response_model=CurrentWeatherResponse)
 async def get_current_weather_endpoint(
-    latitude: float = Query(..., ge=-90, le=90, description="Latitude coordinate"),
-    longitude: float = Query(..., ge=-180, le=180, description="Longitude coordinate")
+    latitude: Optional[float] = Query(None, ge=-90, le=90, description="Latitude coordinate"),
+    longitude: Optional[float] = Query(None, ge=-180, le=180, description="Longitude coordinate"),
+    location: Optional[str] = Query(None, description="City name for current weather"),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    weather_service: WeatherService = Depends(get_weather_service)
 ):
     """
     Get current weather conditions for a specific location.
     
-    Public endpoint - no authentication required. Fetches current weather data from KNMI API
-    for the specified coordinates.
+    Prioritizes coordinates if provided, otherwise uses location string.
+    If no location is provided, falls back to the authenticated user's profile location.
     
     Args:
-        latitude: Latitude coordinate (-90 to 90)
-        longitude: Longitude coordinate (-180 to 180)
+        latitude: Optional latitude coordinate
+        longitude: Optional longitude coordinate
+        location: Optional city name
         
     Returns:
-        Current weather data including location info and current conditions
+        Current weather data
     """
     try:
-        # Validate coordinates
-        if not (-90 <= latitude <= 90):
+        current_user = await get_current_user(credentials, db)
+        
+        if latitude is not None and longitude is not None:
+            weather_data = await weather_service.get_current_weather(latitude=latitude, longitude=longitude)
+        elif location:
+            latitude, longitude = await weather_service.get_coordinates_from_location(location)
+            weather_data = await weather_service.get_current_weather(latitude=latitude, longitude=longitude)
+        elif current_user and current_user.location:
+            latitude, longitude = await weather_service.get_coordinates_from_location(current_user.location)
+            weather_data = await weather_service.get_current_weather(latitude=latitude, longitude=longitude)
+        else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Latitude must be between -90 and 90"
+                detail="Location information required (coordinates or city name)"
             )
-        
-        if not (-180 <= longitude <= 180):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Longitude must be between -180 and 180"
-            )
-        
-        # Fetch current weather
-        weather_data = await get_current_weather(latitude, longitude)
-        
+            
         return CurrentWeatherResponse(**weather_data)
         
     except HTTPException:
         raise
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -154,7 +154,8 @@ async def get_current_weather_endpoint(
 async def get_weather_forecast_post(
     weather_request: WeatherRequest,
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncIOMotorDatabase = Depends(get_database)
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    weather_service: WeatherService = Depends(get_weather_service)
 ):
     """
     Get weather forecast for a specific location (POST version).
@@ -170,12 +171,12 @@ async def get_weather_forecast_post(
     """
     try:
         # Authenticate user
-        current_user = await get_current_user(credentials, db)
+        await get_current_user(credentials, db)
         
         # Fetch weather forecast
-        weather_data = await get_weather_forecast(
-            weather_request.latitude, 
-            weather_request.longitude, 
+        weather_data = await weather_service.get_weather_forecast(
+            weather_request.latitude,
+            weather_request.longitude,
             weather_request.days or 7
         )
         

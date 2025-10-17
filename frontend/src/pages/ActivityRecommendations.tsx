@@ -16,7 +16,7 @@ const ActivityRecommendations = () => {
 
   useEffect(() => {
     if (!isAuthenticated) {
-      navigate('/onboarding');
+      navigate('/');
       return;
     }
 
@@ -28,7 +28,7 @@ const ActivityRecommendations = () => {
       }
     } else {
       // Navigate to the correct previous step instead of the beginning
-      navigate('/weather-planning');
+      navigate('/create-activity');
     }
   }, [location, navigate, isAuthenticated]);
 
@@ -56,8 +56,8 @@ const ActivityRecommendations = () => {
     navigate('/invite-guests', { state: { activity: updatedActivity } });
   };
 
-  const handleBackToWeatherPlanning = () => {
-    navigate('/weather-planning', { state: { activity } });
+  const handleBackToCreateActivity = () => {
+    navigate('/create-activity', { state: { activity, step: 'suggestions-pre-invites' } });
   };
 
   const handleDashboardNavigation = async () => {
@@ -149,11 +149,11 @@ const ActivityRecommendations = () => {
           <div className="flex gap-3 pt-6">
             <Button
               variant="outline"
-              onClick={handleBackToWeatherPlanning}
+              onClick={handleBackToCreateActivity}
               className="flex-1"
               style={{ borderColor: '#1155cc', color: '#1155cc' }}
             >
-              Back to Weather Planning
+              Back
             </Button>
             <Button
               onClick={handleContinueToInvitations}

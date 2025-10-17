@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
@@ -30,7 +30,7 @@ class DeadlineScheduler:
             Dict with summary of notifications sent
         """
         try:
-            current_time = datetime.utcnow()
+            current_time = datetime.now(timezone.utc)
             
             # Find activities with deadlines that need notifications
             # We'll check for deadlines in the next 24 hours or that have passed
@@ -165,7 +165,7 @@ class DeadlineScheduler:
             return {
                 "success": False,
                 "error": error_msg,
-                "timestamp": current_time.isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
     
     async def run_periodic_check(self, db: AsyncIOMotorDatabase, interval_hours: int = 1):

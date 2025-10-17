@@ -8,16 +8,20 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Calendar, Cloud, Users, Check, X, Clock, Download, Heart, MapPin, Loader2, CalendarIcon } from 'lucide-react';
+import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
+import { Calendar, Cloud, Users, Check, X, Clock, Download, Heart, MapPin, Loader2, CalendarIcon, MessageSquare } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { apiService } from '@/services/api';
+import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import ResponseChangeConfirmationModal from '@/components/ResponseChangeConfirmationModal';
 
 const GuestResponse = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { activityId: activityIdFromParams } = useParams();
+  const { user } = useAuth();
   const [activity, setActivity] = useState<any>(null);
   const [response, setResponse] = useState('');
   const [availabilityNote, setAvailabilityNote] = useState('');
@@ -29,6 +33,8 @@ const GuestResponse = () => {
   const [guestEmail, setGuestEmail] = useState('');
   const [isResponseChange, setIsResponseChange] = useState(false);
   const [existingResponse, setExistingResponse] = useState<any>(null);
+  const [showConfirmationModal, setShowConfirmationModal] = useState(false);
+  const [pendingResponse, setPendingResponse] = useState('');
   const [preferences, setPreferences] = useState({
     indoor: false,
     outdoor: false,
@@ -43,9 +49,9 @@ const GuestResponse = () => {
 
   useEffect(() => {
     const loadActivity = async () => {
-      const activityId = searchParams.get('activity');
+      const activityId = activityIdFromParams || searchParams.get('activity');
       const email = searchParams.get('email');
-      
+
       if (!activityId) {
         navigate('/');
         return;
@@ -57,19 +63,19 @@ const GuestResponse = () => {
 
       try {
         setIsLoading(true);
-        const response = await apiService.getPublicActivity(activityId);
+        const response = user
+          ? await apiService.getActivity(activityId)
+          : await apiService.getPublicActivity(activityId);
         
         if (response.data) {
           setActivity(response.data);
           
-          // Check if guest already has a response and pre-fill form
+          if (user && user.id === response.data.organizer_id) {
+            // This is the organizer viewing the invite, so disable submission form
+            setSubmitted(true);
+          }
+
           if (email && response.data) {
-            // We need to get the full activity data to check for existing responses
-            // For now, we'll simulate checking if this is a response change
-            // In a real implementation, we might need an additional API call
-            // or include invitee data in the public activity response
-            
-            // For guest responses, we can check if there's existing data in URL params
             const existingResponseParam = searchParams.get('existing_response');
             const existingNoteParam = searchParams.get('existing_note');
             const existingVenueParam = searchParams.get('existing_venue');
@@ -80,7 +86,6 @@ const GuestResponse = () => {
               setAvailabilityNote(existingNoteParam || '');
               setVenueSuggestion(existingVenueParam || '');
               
-              // Try to parse preferences if they exist
               const existingPrefsParam = searchParams.get('existing_prefs');
               if (existingPrefsParam) {
                 try {
@@ -111,10 +116,36 @@ const GuestResponse = () => {
     };
 
     loadActivity();
-  }, [searchParams, navigate]);
+  }, [searchParams, navigate, activityIdFromParams, user]);
 
   const handleResponse = (responseType) => {
-    setResponse(responseType);
+    // If this is a response change and the new response is different from existing
+    if (isResponseChange && existingResponse && existingResponse.response !== responseType) {
+      setPendingResponse(responseType);
+      setShowConfirmationModal(true);
+    } else {
+      // For initial responses or same response, set directly
+      setResponse(responseType);
+    }
+  };
+
+  const handleConfirmResponseChange = async () => {
+    setResponse(pendingResponse);
+    setShowConfirmationModal(false);
+    setPendingResponse('');
+    
+    // Update existing response to reflect the change
+    if (existingResponse) {
+      setExistingResponse({
+        ...existingResponse,
+        response: pendingResponse
+      });
+    }
+  };
+
+  const handleCancelResponseChange = () => {
+    setShowConfirmationModal(false);
+    setPendingResponse('');
   };
 
   const handlePreferenceChange = (preference, checked) => {
@@ -155,6 +186,14 @@ const GuestResponse = () => {
         setSubmitted(true);
         if (isResponseChange) {
           showSuccess('Response updated successfully!');
+          // Update existing response data to reflect the change
+          setExistingResponse({
+            ...existingResponse,
+            response: response,
+            availability_note: formattedAvailability,
+            venue_suggestion: venueSuggestion,
+            preferences: preferences
+          });
         } else {
           showSuccess('Response submitted successfully!');
         }
@@ -292,10 +331,23 @@ END:VCALENDAR`;
           </p>
           {activity.deadline && (
             <div className="mt-2">
-              <Badge variant="outline" className="text-orange-600 border-orange-300">
-                <Clock className="w-3 h-3 mr-1" />
-                {getDeadlineText()}
-              </Badge>
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <Clock className="w-4 h-4 text-orange-600" />
+                <span>Response Deadline: </span>
+                <span className="font-medium">
+                  {new Date(activity.deadline).toLocaleDateString('en-US', {
+                    weekday: 'short',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    timeZoneName: 'short'
+                  })}
+                </span>
+                <Badge variant="outline" className="text-orange-600 border-orange-300 ml-2">
+                  {getDeadlineText()}
+                </Badge>
+              </div>
             </div>
           )}
         </div>
@@ -345,16 +397,35 @@ END:VCALENDAR`;
                 </div>
               </div>
               
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Cloud className="w-4 h-4" />
-                  Weather Preference
+              {activity.selected_date && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Cloud className="w-4 h-4" />
+                    Weather Preference
+                  </div>
+                  <Badge variant="outline">{activity.weather_preference}</Badge>
                 </div>
-                <Badge variant="outline">{activity.weather_preference}</Badge>
-              </div>
+              )}
             </div>
           </CardContent>
         </Card>
+
+        {/* Invitation Message */}
+        {activity.message && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5" />
+                Invitation Message
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="p-3 bg-gray-50 rounded-lg border-l-4 border-blue-500">
+                <p className="text-gray-700 italic">"{activity.message}"</p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Activity Details */}
         {activity.selected_date && (
@@ -593,6 +664,18 @@ END:VCALENDAR`;
           </CardContent>
         </Card>
       </div>
+
+      {/* Response Change Confirmation Modal */}
+      <ResponseChangeConfirmationModal
+        isOpen={showConfirmationModal}
+        onClose={handleCancelResponseChange}
+        onConfirm={handleConfirmResponseChange}
+        currentResponse={existingResponse?.response || ''}
+        newResponse={pendingResponse}
+        activityTitle={activity?.title || ''}
+        organizerName={activity?.organizer_name}
+        isLoading={false}
+      />
     </div>
   );
 };

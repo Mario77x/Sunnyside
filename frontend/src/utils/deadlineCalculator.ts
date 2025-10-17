@@ -27,7 +27,11 @@ export const calculateDeadline = ({ activityDate, currentDate = new Date() }: De
 };
 
 export const getDeadlineText = (deadline: Date, currentDate: Date = new Date()): string => {
-  const timeDiff = deadline.getTime() - currentDate.getTime();
+  // Ensure we're working with proper Date objects
+  const deadlineDate = new Date(deadline);
+  const currentDateTime = new Date(currentDate);
+  
+  const timeDiff = deadlineDate.getTime() - currentDateTime.getTime();
   
   if (timeDiff <= 0) {
     return 'Deadline passed';
@@ -46,11 +50,15 @@ export const getDeadlineText = (deadline: Date, currentDate: Date = new Date()):
 };
 
 export const isDeadlinePassed = (deadline: Date, currentDate: Date = new Date()): boolean => {
-  return deadline.getTime() <= currentDate.getTime();
+  const deadlineDate = new Date(deadline);
+  const currentDateTime = new Date(currentDate);
+  return deadlineDate.getTime() <= currentDateTime.getTime();
 };
 
 export const getDeadlineStatus = (deadline: Date, currentDate: Date = new Date()): 'active' | 'warning' | 'passed' => {
-  const timeDiff = deadline.getTime() - currentDate.getTime();
+  const deadlineDate = new Date(deadline);
+  const currentDateTime = new Date(currentDate);
+  const timeDiff = deadlineDate.getTime() - currentDateTime.getTime();
   const hoursLeft = timeDiff / (1000 * 60 * 60);
   
   if (hoursLeft <= 0) {

@@ -7,11 +7,44 @@ import asyncio
 import json
 import sys
 import os
+from motor.motor_asyncio import AsyncIOMotorClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Add the backend directory to the Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
 from backend.services.llm import llm_service
+from backend.utils.environment import load_secrets_from_mongodb
+
+async def setup_environment():
+    """Setup environment by loading secrets from MongoDB."""
+    print("Setting up environment...")
+    
+    # Get MongoDB connection details
+    mongodb_uri = os.getenv("MONGODB_URI")
+    database_name = os.getenv("DATABASE_NAME", "sunnyside")
+    
+    if not mongodb_uri:
+        print("⚠ MONGODB_URI not found in environment variables")
+        return False
+    
+    try:
+        # Connect to MongoDB
+        mongodb_client = AsyncIOMotorClient(mongodb_uri)
+        
+        # Load secrets from MongoDB
+        await load_secrets_from_mongodb(mongodb_client, database_name)
+        
+        # Close the connection
+        mongodb_client.close()
+        
+        return True
+    except Exception as e:
+        print(f"⚠ Failed to setup environment: {e}")
+        return False
 
 async def test_venue_recommendations():
     """Test the venue recommendations with real context data."""
@@ -35,7 +68,8 @@ async def test_venue_recommendations():
             date="2024-01-20",
             indoor_outdoor_preference="outdoor",
             location="Amsterdam",
-            group_size=4
+            group_size=4,
+            suggestion_type="specific"  # Use "specific" to get venue-based recommendations
         )
         
         print("✅ API call successful!")
@@ -82,6 +116,14 @@ async def main():
     """Run all tests."""
     print("🧪 Testing Mistral AI Venue Recommendations Integration\n")
     
+    # Setup environment first
+    setup_success = await setup_environment()
+    if not setup_success:
+        print("❌ Failed to setup environment. Exiting.")
+        return 1
+    
+    print("✅ Environment setup complete\n")
+    
     # Test venue search
     search_success = await test_venue_search()
     
@@ -89,10 +131,11 @@ async def main():
     rec_success = await test_venue_recommendations()
     
     print(f"\n📊 Test Results:")
+    print(f"Environment Setup: {'✅ PASS' if setup_success else '❌ FAIL'}")
     print(f"Venue Search: {'✅ PASS' if search_success else '❌ FAIL'}")
     print(f"Recommendations: {'✅ PASS' if rec_success else '❌ FAIL'}")
     
-    if search_success and rec_success:
+    if setup_success and search_success and rec_success:
         print("\n🎉 All tests passed! The integration is working correctly.")
         return 0
     else:

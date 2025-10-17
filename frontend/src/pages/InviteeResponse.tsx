@@ -16,6 +16,7 @@ import { apiService } from '@/services/api';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { useCalendarAvailability } from '@/hooks/useCalendarAvailability';
+import ResponseChangeConfirmationModal from '@/components/ResponseChangeConfirmationModal';
 
 const InviteeResponse = () => {
   const navigate = useNavigate();
@@ -42,6 +43,8 @@ const InviteeResponse = () => {
   const [showCustomNote, setShowCustomNote] = useState(false);
   const [availabilityDate, setAvailabilityDate] = useState<Date | undefined>(undefined);
   const [availabilityTime, setAvailabilityTime] = useState('');
+  const [showConfirmationModal, setShowConfirmationModal] = useState(false);
+  const [pendingResponse, setPendingResponse] = useState('');
 
   useEffect(() => {
     // Wait for auth to load
@@ -154,7 +157,34 @@ const InviteeResponse = () => {
   };
 
   const handleResponse = (responseType) => {
-    setResponse(responseType);
+    // If this is a response change and the new response is different from existing
+    if (isResponseChange && existingResponse && existingResponse.response !== responseType) {
+      setPendingResponse(responseType);
+      setShowConfirmationModal(true);
+    } else {
+      // For initial responses or same response, set directly
+      setResponse(responseType);
+    }
+  };
+
+  const handleConfirmResponseChange = async () => {
+    setResponse(pendingResponse);
+    setShowConfirmationModal(false);
+    setPendingResponse('');
+    
+    // Update existing response to reflect the change
+    if (existingResponse) {
+      setExistingResponse({
+        ...existingResponse,
+        response: pendingResponse,
+        previous_response: existingResponse.response
+      });
+    }
+  };
+
+  const handleCancelResponseChange = () => {
+    setShowConfirmationModal(false);
+    setPendingResponse('');
   };
 
   const handleSubmit = async () => {
@@ -189,8 +219,39 @@ const InviteeResponse = () => {
       }
 
       setSubmitted(true);
-      if (result.data?.is_change) {
+      if (result.data?.is_change || isResponseChange) {
         showSuccess('Response updated successfully!');
+        // Update existing response data to reflect the change
+        if (existingResponse) {
+          setExistingResponse({
+            ...existingResponse,
+            response: response,
+            availability_note: formattedAvailability,
+            venue_suggestion: venueSuggestion,
+            preferences: preferences,
+            previous_response: existingResponse.response
+          });
+        }
+        
+        // Update activity data to reflect the change
+        if (activity && activity.invitees && user) {
+          const updatedInvitees = activity.invitees.map(inv => {
+            if (inv.email === user.email || inv.id === user.id) {
+              return {
+                ...inv,
+                response: response,
+                availability_note: formattedAvailability,
+                venue_suggestion: venueSuggestion,
+                preferences: preferences
+              };
+            }
+            return inv;
+          });
+          setActivity({
+            ...activity,
+            invitees: updatedInvitees
+          });
+        }
       } else {
         showSuccess('Response submitted successfully!');
       }
@@ -782,6 +843,18 @@ const InviteeResponse = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Response Change Confirmation Modal */}
+      <ResponseChangeConfirmationModal
+        isOpen={showConfirmationModal}
+        onClose={handleCancelResponseChange}
+        onConfirm={handleConfirmResponseChange}
+        currentResponse={existingResponse?.response || ''}
+        newResponse={pendingResponse}
+        activityTitle={activity?.title || ''}
+        organizerName={activity?.organizer_name}
+        isLoading={false}
+      />
     </div>
   );
 };

@@ -298,7 +298,8 @@ const ActivitySummary = () => {
                         month: 'short',
                         day: 'numeric',
                         hour: 'numeric',
-                        minute: '2-digit'
+                        minute: '2-digit',
+                        timeZoneName: 'short'
                       })}
                     </span>
                     <Badge
@@ -421,14 +422,13 @@ const ActivitySummary = () => {
                 console.log('🔍 [ActivitySummary] Button render check - activity?.organizer_id:', activity?.organizer_id);
                 return null;
               })()}
-              {guestExperienceLink && user?.id === activity?.organizer_id && (
+              {user?.role === 'admin' && (
                 <Button
-                  onClick={handleTestGuestExperience}
+                  onClick={() => navigate(`/guest-preview/${activity.id}`)}
                   variant="outline"
                   className="w-full"
-                  style={{ borderColor: '#1155cc', color: '#1155cc' }}
                 >
-                  Test Guest Experience
+                  View Invite (Guest Preview)
                 </Button>
               )}
               <Button

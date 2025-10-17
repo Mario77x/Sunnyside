@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any, Annotated
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 
@@ -60,7 +60,7 @@ class AIRecommendation(BaseModel):
     price_range: Optional[str] = Field(None, max_length=50)
     category: str = Field(..., max_length=100)
     venue_details: Optional[Dict[str, Any]] = Field(default_factory=dict)
-    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class WeatherData(BaseModel):
@@ -107,8 +107,8 @@ class Activity(BaseModel):
     invitees: List[Invitee] = Field(default_factory=list)
     
     # Metadata
-    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
-    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ActivityCreate(BaseModel):
@@ -131,7 +131,7 @@ class ActivityUpdate(BaseModel):
     deadline: Optional[datetime] = None
     weather_data: Optional[List[WeatherData]] = None
     invitees: Optional[List[Invitee]] = None
-    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ActivityResponse(BaseModel):
@@ -160,6 +160,7 @@ class ActivityResponse(BaseModel):
 class InviteGuestsRequest(BaseModel):
     invitees: List[Dict[str, str]] = Field(..., description="List of invitees with name and email")
     custom_message: Optional[str] = Field(None, max_length=500)
+    channel: Optional[str] = Field(default="email", description="Communication channel: email, whatsapp, or sms")
 
 
 class GuestResponseRequest(BaseModel):

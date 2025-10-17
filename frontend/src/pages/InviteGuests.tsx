@@ -4,11 +4,14 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Plus, Users, Mail, MessageSquare, X, Send, MapPin, Star, Loader2, Cloud, Sun, CloudRain, Calendar, Lightbulb, ThermometerSun, Clock, Settings } from 'lucide-react';
+import { ArrowLeft, Plus, Users, Mail, MessageSquare, X, Send, MapPin, Star, Loader2, Cloud, Sun, CloudRain, Calendar, Lightbulb, ThermometerSun, Clock, Settings, Smartphone, UserCheck } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiService, Activity } from '@/services/api';
+import { apiService, Activity, Contact } from '@/services/api';
 import { calculateDeadline, getDeadlineText } from '@/utils/deadlineCalculator';
 
 const InviteGuests = () => {
@@ -22,15 +25,46 @@ const InviteGuests = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [guestExperienceLink, setGuestExperienceLink] = useState<string | null>(null);
   
+  // Contact selection state
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
+  const [isLoadingContacts, setIsLoadingContacts] = useState(false);
+  
   // Deadline configuration state
   const [deadline, setDeadline] = useState<Date | null>(null);
   const [isCustomDeadline, setIsCustomDeadline] = useState(false);
   const [customDeadlineDate, setCustomDeadlineDate] = useState('');
   const [customDeadlineTime, setCustomDeadlineTime] = useState('');
+  
+  // Channel selection state
+  const [selectedChannel, setSelectedChannel] = useState<'email' | 'whatsapp' | 'sms'>('email');
+
+  // Fetch user contacts on component mount
+  useEffect(() => {
+    const fetchContacts = async () => {
+      if (!isAuthenticated) return;
+      
+      try {
+        setIsLoadingContacts(true);
+        const response = await apiService.getContacts();
+        if (response.data) {
+          setContacts(response.data.contacts);
+        } else if (response.error) {
+          console.warn('Failed to fetch contacts:', response.error);
+        }
+      } catch (error) {
+        console.warn('Error fetching contacts:', error);
+      } finally {
+        setIsLoadingContacts(false);
+      }
+    };
+
+    fetchContacts();
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) {
-      navigate('/onboarding');
+      navigate('/');
       return;
     }
 
@@ -89,25 +123,71 @@ const InviteGuests = () => {
 
   const handleCustomDeadlineToggle = () => {
     setIsCustomDeadline(!isCustomDeadline);
+    // When switching back to default, recalculate the default deadline
+    if (isCustomDeadline && activity) {
+      calculateDefaultDeadline(activity);
+    }
   };
 
   const handleCustomDeadlineChange = () => {
     if (customDeadlineDate && customDeadlineTime) {
+      // Create deadline in user's local timezone
       const customDeadline = new Date(`${customDeadlineDate}T${customDeadlineTime}`);
       setDeadline(customDeadline);
     }
   };
 
+  // Add effect to update deadline display dynamically
+  useEffect(() => {
+    if (isCustomDeadline && customDeadlineDate && customDeadlineTime) {
+      handleCustomDeadlineChange();
+    }
+  }, [customDeadlineDate, customDeadlineTime, isCustomDeadline]);
+
   const getDeadlineDisplayText = () => {
     if (!deadline) return '';
     
     const now = new Date();
-    const isFlexible = !activity?.selected_date;
     
-    if (isFlexible) {
-      return `Default: 48 hours from now (${getDeadlineText(deadline, now)})`;
+    if (isCustomDeadline) {
+      // Custom deadline - show remaining time
+      return `Custom: ${getDeadlineText(deadline, now)}`;
     } else {
-      return `Default: ${getDeadlineText(deadline, now)}`;
+      // Default deadline - show simple text without confusing time calculations
+      return `Default: 48 hours from now`;
+    }
+  };
+
+  // Contact selection handlers
+  const handleContactSelection = (contactId: string, checked: boolean) => {
+    const newSelectedContacts = new Set(selectedContacts);
+    if (checked) {
+      newSelectedContacts.add(contactId);
+    } else {
+      newSelectedContacts.delete(contactId);
+    }
+    setSelectedContacts(newSelectedContacts);
+  };
+
+  const addSelectedContactsToInvitees = () => {
+    const contactsToAdd = contacts.filter(contact => selectedContacts.has(contact.id));
+    const newInvitees = contactsToAdd.map(contact => ({
+      id: Date.now() + Math.random(), // Ensure unique ID
+      name: contact.nickname || contact.contact_name,
+      email: contact.contact_email,
+      phone: '' // Contacts don't have phone numbers in this system
+    }));
+    
+    // Filter out contacts that are already in the invitees list
+    const existingEmails = new Set(invitees.map(inv => inv.email));
+    const filteredNewInvitees = newInvitees.filter(inv => !existingEmails.has(inv.email));
+    
+    if (filteredNewInvitees.length > 0) {
+      setInvitees(prev => [...prev, ...filteredNewInvitees]);
+      setSelectedContacts(new Set()); // Clear selection after adding
+      showSuccess(`Added ${filteredNewInvitees.length} contact(s) to invitees`);
+    } else {
+      showError('Selected contacts are already in the invitee list');
     }
   };
 
@@ -137,7 +217,8 @@ const InviteGuests = () => {
       
       const response = await apiService.inviteGuests(activity.id, {
         invitees: invitees.map(inv => ({ name: inv.name, email: inv.email })),
-        custom_message: customMessage
+        custom_message: customMessage,
+        channel: selectedChannel
       });
 
       if (response.data) {
@@ -312,7 +393,7 @@ const InviteGuests = () => {
             )}
 
             {/* Weather Forecast */}
-            {activity?.weather_data && activity.weather_data.length > 0 && (
+            {activity?.selected_date && activity?.weather_data && activity.weather_data.length > 0 && (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <ThermometerSun className="w-4 h-4 text-blue-500" />
@@ -393,6 +474,146 @@ const InviteGuests = () => {
           </CardContent>
         </Card>
 
+        {/* Contact Selection */}
+        {contacts.length > 0 && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <UserCheck className="w-5 h-5" />
+                Select from Your Contacts
+              </CardTitle>
+              <CardDescription>
+                Choose people from your saved contacts to invite to this activity
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {isLoadingContacts ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  Loading contacts...
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-60 overflow-y-auto">
+                    {contacts.map((contact) => (
+                      <div key={contact.id} className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-gray-50">
+                        <Checkbox
+                          id={`contact-${contact.id}`}
+                          checked={selectedContacts.has(contact.id)}
+                          onCheckedChange={(checked) => handleContactSelection(contact.id, checked as boolean)}
+                        />
+                        <Label htmlFor={`contact-${contact.id}`} className="flex-1 cursor-pointer">
+                          <div className="font-medium">
+                            {contact.nickname || contact.contact_name}
+                          </div>
+                          <div className="text-sm text-gray-500 flex items-center gap-1">
+                            <Mail className="w-3 h-3" />
+                            {contact.contact_email}
+                          </div>
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {selectedContacts.size > 0 && (
+                    <div className="flex items-center justify-between pt-3 border-t">
+                      <span className="text-sm text-gray-600">
+                        {selectedContacts.size} contact{selectedContacts.size !== 1 ? 's' : ''} selected
+                      </span>
+                      <Button
+                        onClick={addSelectedContactsToInvitees}
+                        size="sm"
+                        style={{ backgroundColor: '#1155cc', color: 'white' }}
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add Selected
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Channel Selection */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Send className="w-5 h-5" />
+              Invitation Channel
+            </CardTitle>
+            <CardDescription>
+              Choose how you want to send invitations to your guests
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <RadioGroup
+              value={selectedChannel}
+              onValueChange={(value: 'email' | 'whatsapp' | 'sms') => setSelectedChannel(value)}
+              className="grid grid-cols-1 md:grid-cols-3 gap-4"
+            >
+              <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                <RadioGroupItem value="email" id="email" />
+                <Label htmlFor="email" className="flex items-center gap-3 cursor-pointer flex-1">
+                  <Mail className="w-5 h-5 text-blue-600" />
+                  <div>
+                    <div className="font-medium">Email</div>
+                    <div className="text-sm text-gray-500">Send via email (default)</div>
+                  </div>
+                </Label>
+              </div>
+              
+              <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                <RadioGroupItem value="whatsapp" id="whatsapp" />
+                <Label htmlFor="whatsapp" className="flex items-center gap-3 cursor-pointer flex-1">
+                  <MessageSquare className="w-5 h-5 text-green-600" />
+                  <div>
+                    <div className="font-medium">WhatsApp</div>
+                    <div className="text-sm text-gray-500">Send via WhatsApp</div>
+                  </div>
+                </Label>
+              </div>
+              
+              <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                <RadioGroupItem value="sms" id="sms" />
+                <Label htmlFor="sms" className="flex items-center gap-3 cursor-pointer flex-1">
+                  <Smartphone className="w-5 h-5 text-purple-600" />
+                  <div>
+                    <div className="font-medium">SMS</div>
+                    <div className="text-sm text-gray-500">Send via text message</div>
+                  </div>
+                </Label>
+              </div>
+            </RadioGroup>
+            
+            {/* Channel-specific information */}
+            {selectedChannel === 'whatsapp' && (
+              <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                <div className="flex items-center gap-2 text-green-800">
+                  <MessageSquare className="w-4 h-4" />
+                  <span className="font-medium">WhatsApp Requirements</span>
+                </div>
+                <p className="text-sm text-green-700 mt-1">
+                  Make sure to include phone numbers for your invitees. WhatsApp invitations will be sent to their mobile numbers.
+                </p>
+              </div>
+            )}
+            
+            {selectedChannel === 'sms' && (
+              <div className="mt-4 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                <div className="flex items-center gap-2 text-purple-800">
+                  <Smartphone className="w-4 h-4" />
+                  <span className="font-medium">SMS Requirements</span>
+                </div>
+                <p className="text-sm text-purple-700 mt-1">
+                  Phone numbers are required for SMS invitations. Standard messaging rates may apply.
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Invitee List */}
         {invitees.length > 0 && (
           <Card className="mb-6">
@@ -469,7 +690,7 @@ const InviteGuests = () => {
             <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="flex items-center gap-2 mb-2">
                 <Clock className="w-4 h-4 text-blue-600" />
-                <span className="font-medium text-blue-900">Default Deadline</span>
+                <span className="font-medium text-blue-900">Response Deadline</span>
               </div>
               <div className="text-sm text-blue-800">
                 {getDeadlineDisplayText()}
@@ -482,7 +703,8 @@ const InviteGuests = () => {
                     month: 'long',
                     day: 'numeric',
                     hour: '2-digit',
-                    minute: '2-digit'
+                    minute: '2-digit',
+                    timeZoneName: 'short'
                   })}
                 </div>
               )}
@@ -593,7 +815,7 @@ const InviteGuests = () => {
                 </div>
 
                 {/* Weather Forecast Preview */}
-                {activity?.weather_data && activity.weather_data.length > 0 && (
+                {activity?.selected_date && activity?.weather_data && activity.weather_data.length > 0 && (
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <ThermometerSun className="w-4 h-4 text-blue-500" />
@@ -660,7 +882,8 @@ const InviteGuests = () => {
                       <div className="text-sm text-red-700">
                         {deadline.toLocaleTimeString('en-US', {
                           hour: '2-digit',
-                          minute: '2-digit'
+                          minute: '2-digit',
+                          timeZoneName: 'short'
                         })}
                       </div>
                       <div className="text-xs text-red-600 mt-1">

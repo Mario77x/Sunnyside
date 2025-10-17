@@ -1,9 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List
 from ..services.llm import llm_service
 from ..services.risk_assessment import get_risk_assessment_service
-from ..services.smart_scheduling import smart_scheduling_service
+from ..services.smart_scheduling import SmartSchedulingService, get_smart_scheduling_service
+from ..auth import get_current_user, security
+from ..dependencies import get_database
 
 router = APIRouter(prefix="/llm", tags=["llm"])
 
@@ -27,6 +30,7 @@ class RecommendationsRequest(BaseModel):
     indoor_outdoor_preference: Optional[str] = Field(None, description="Indoor/outdoor preference: 'indoor', 'outdoor', 'either'")
     location: Optional[str] = Field(None, description="Optional location information")
     group_size: Optional[int] = Field(None, description="Optional number of people in the group", ge=1, le=50)
+    suggestion_type: str = Field(default="general", description="Type of suggestions: 'general' for inspirational, 'specific' for venue-based")
     
     class Config:
         json_schema_extra = {
@@ -52,6 +56,7 @@ class GenerateSuggestionsRequest(BaseModel):
     date: Optional[str] = Field(None, description="Date for the activity (YYYY-MM-DD format)")
     indoor_outdoor_preference: Optional[str] = Field(None, description="Indoor/outdoor preference: 'indoor', 'outdoor', 'either'")
     group_size: Optional[int] = Field(None, description="Number of people in the group", ge=1, le=50)
+    user_location: Optional[str] = Field(None, description="User location from profile (preferred over IP location)")
     
     class Config:
         json_schema_extra = {
@@ -412,7 +417,11 @@ async def test_parse_intent():
         )
 
 @router.post("/recommendations", response_model=RecommendationsResponse)
-async def get_activity_recommendations(request: RecommendationsRequest) -> RecommendationsResponse:
+async def get_activity_recommendations(
+    request: RecommendationsRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db = Depends(get_database)
+) -> RecommendationsResponse:
     """
     Get activity recommendations using RAG pipeline.
     
@@ -430,6 +439,9 @@ async def get_activity_recommendations(request: RecommendationsRequest) -> Recom
         HTTPException: If the request is invalid or processing fails
     """
     try:
+        # Get current user for location context
+        current_user = await get_current_user(credentials, db)
+        
         # DEBUG: Log the incoming request payload
         print(f"[DEBUG] Recommendations request received:")
         print(f"[DEBUG] Query: {request.query}")
@@ -438,6 +450,7 @@ async def get_activity_recommendations(request: RecommendationsRequest) -> Recom
         print(f"[DEBUG] Date: {request.date}")
         print(f"[DEBUG] Indoor/outdoor preference: {request.indoor_outdoor_preference}")
         print(f"[DEBUG] Location: {request.location}")
+        print(f"[DEBUG] User location: {current_user.location}")
         print(f"[DEBUG] Group size: {request.group_size}")
         
         # Validate input
@@ -447,6 +460,10 @@ async def get_activity_recommendations(request: RecommendationsRequest) -> Recom
                 detail="Query cannot be empty"
             )
         
+        # Use user's profile location if no location provided in request
+        effective_location = request.location or current_user.location or "Amsterdam"
+        print(f"[DEBUG] Effective location: {effective_location}")
+        
         # Get recommendations using the LLM service
         result = await llm_service.get_recommendations(
             query=request.query.strip(),
@@ -454,8 +471,9 @@ async def get_activity_recommendations(request: RecommendationsRequest) -> Recom
             weather_data=request.weather_data,
             date=request.date,
             indoor_outdoor_preference=request.indoor_outdoor_preference,
-            location=request.location,
-            group_size=request.group_size
+            location=effective_location,
+            group_size=request.group_size,
+            suggestion_type=request.suggestion_type
         )
         
         # Return the result
@@ -570,7 +588,11 @@ async def assess_risk(request: RiskAssessmentRequest) -> RiskAssessmentResponse:
         )
 
 @router.post("/generate-suggestions", response_model=GenerateSuggestionsResponse)
-async def generate_activity_suggestions(request: GenerateSuggestionsRequest) -> GenerateSuggestionsResponse:
+async def generate_activity_suggestions(
+    request: GenerateSuggestionsRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db = Depends(get_database)
+) -> GenerateSuggestionsResponse:
     """
     Generate activity suggestions using Mistral AI based on activity details.
     
@@ -590,6 +612,9 @@ async def generate_activity_suggestions(request: GenerateSuggestionsRequest) -> 
         HTTPException: If the request is invalid or processing fails
     """
     try:
+        # Get current user for location context
+        current_user = await get_current_user(credentials, db)
+        
         # Validate input
         if not request.activity_description or not request.activity_description.strip():
             raise HTTPException(
@@ -597,12 +622,17 @@ async def generate_activity_suggestions(request: GenerateSuggestionsRequest) -> 
                 detail="Activity description cannot be empty"
             )
         
+        # Use user's profile location if no location provided in request
+        effective_user_location = request.user_location or current_user.location
+        print(f"[DEBUG] Generate suggestions - User location: {current_user.location}, Request location: {request.user_location}, Effective: {effective_user_location}")
+        
         # Generate suggestions using the LLM service
         result = await llm_service.generate_activity_suggestions(
             activity_description=request.activity_description.strip(),
             date=request.date,
             indoor_outdoor_preference=request.indoor_outdoor_preference,
-            group_size=request.group_size
+            group_size=request.group_size,
+            user_location=effective_user_location
         )
         
         # Return the result
@@ -665,7 +695,7 @@ async def test_risk_assessment():
     }
 
 @router.post("/smart-scheduling", response_model=SmartSchedulingResponse)
-async def get_smart_scheduling_suggestions(request: SmartSchedulingRequest) -> SmartSchedulingResponse:
+async def get_smart_scheduling_suggestions(request: SmartSchedulingRequest, smart_scheduling_service: SmartSchedulingService = Depends(get_smart_scheduling_service)) -> SmartSchedulingResponse:
     """
     Generate smart scheduling suggestions for activities based on participant availability.
     
@@ -732,7 +762,7 @@ async def get_smart_scheduling_suggestions(request: SmartSchedulingRequest) -> S
         )
 
 @router.post("/test-smart-scheduling")
-async def test_smart_scheduling():
+async def test_smart_scheduling(smart_scheduling_service: SmartSchedulingService = Depends(get_smart_scheduling_service)):
     """
     Test endpoint for smart scheduling with sample data.
     

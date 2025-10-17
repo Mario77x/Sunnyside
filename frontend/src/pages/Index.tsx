@@ -112,8 +112,9 @@ const Index = () => {
     });
 
     if (!isAuthenticated) {
-      console.log('🚫 [Index] Not authenticated, navigating to /onboarding');
-      navigate('/onboarding');
+      console.log('🚫 [Index] Not authenticated, staying on home page');
+      // Stay on home page - user can see sign in/sign up options
+      return;
     } else if (isProfileLoading) {
       console.log('⏳ [Index] Profile still loading, not navigating');
       // Still loading profile data, don't navigate yet
@@ -331,7 +332,10 @@ const Index = () => {
 
     return {
       status: 'pending',
-      badge: <Badge variant="outline" className="text-orange-600 border-orange-300">⏳ Pending</Badge>
+      badge: <Badge variant="outline" className="text-orange-600 border-orange-300">
+        <Clock className="w-3 h-3 mr-1" />
+        Pending
+      </Badge>
     };
   };
 

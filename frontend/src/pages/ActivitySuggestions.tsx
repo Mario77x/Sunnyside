@@ -23,7 +23,7 @@ const ActivitySuggestions = () => {
 
   useEffect(() => {
     if (!isAuthenticated) {
-      navigate('/onboarding');
+      navigate('/');
       return;
     }
 
@@ -48,7 +48,7 @@ const ActivitySuggestions = () => {
       const options = {
         date: activityData.selected_date,
         indoor_outdoor_preference: activityData.weather_preference || activityData.weatherPreference,
-        location: activityData.location || 'local',
+        location: user?.location || activityData.location || 'Amsterdam', // Use user profile location first
         group_size: activityData.group_size || (activityData.groupSize ? parseInt(activityData.groupSize) : undefined),
         weather_data: activityData.weather_data
       };
@@ -225,6 +225,61 @@ const ActivitySuggestions = () => {
                                     )}
                                   </div>
                                   <p className="text-gray-600 text-sm mb-3">{suggestion.description}</p>
+                                  
+                                  {/* Venue Information */}
+                                  {suggestion.venue && (
+                                    <div className="bg-gray-50 rounded-lg p-3 mb-3">
+                                      <div className="flex items-start gap-3">
+                                        {suggestion.venue.image_url && (
+                                          <img
+                                            src={suggestion.venue.image_url}
+                                            alt={suggestion.venue.name}
+                                            className="w-16 h-16 rounded-lg object-cover flex-shrink-0"
+                                            onError={(e) => {
+                                              e.currentTarget.src = `https://via.placeholder.com/64x64?text=${encodeURIComponent(suggestion.venue.name.substring(0, 2))}`;
+                                            }}
+                                          />
+                                        )}
+                                        <div className="flex-1 min-w-0">
+                                          <h6 className="font-medium text-gray-900 text-sm">{suggestion.venue.name}</h6>
+                                          <p className="text-xs text-gray-600 mb-1">{suggestion.venue.address}</p>
+                                          <div className="flex items-center gap-2 mb-1">
+                                            {suggestion.venue.rating && (
+                                              <span className="text-xs text-yellow-600 font-medium">
+                                                ⭐ {suggestion.venue.rating}
+                                              </span>
+                                            )}
+                                            {suggestion.venue.price_range && (
+                                              <span className="text-xs text-green-600 font-medium">
+                                                {suggestion.venue.price_range}
+                                              </span>
+                                            )}
+                                          </div>
+                                          {suggestion.venue.features && suggestion.venue.features.length > 0 && (
+                                            <div className="flex flex-wrap gap-1">
+                                              {suggestion.venue.features.slice(0, 2).map((feature, idx) => (
+                                                <span key={idx} className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                                                  {feature}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                        {suggestion.venue.link && (
+                                          <a
+                                            href={suggestion.venue.link}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-blue-600 hover:text-blue-800 text-xs"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            View →
+                                          </a>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                  
                                   <div className="flex flex-wrap gap-2">
                                     {suggestion.category && (
                                       <Badge variant="secondary" className="text-xs">

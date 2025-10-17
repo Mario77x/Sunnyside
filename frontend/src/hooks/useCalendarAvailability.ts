@@ -132,11 +132,13 @@ export const useCalendarAvailability = (
 
   // Initial load
   useEffect(() => {
+    console.log("fetchAvailability effect");
     fetchAvailability();
   }, [fetchAvailability]);
 
   // Auto-refresh setup
   useEffect(() => {
+    console.log("autoRefresh effect");
     if (autoRefresh && refreshInterval > 0) {
       intervalRef.current = setInterval(() => {
         fetchAvailability();
@@ -164,6 +166,7 @@ export const useCalendarAvailability = (
 
   // Listen for calendar integration status changes
   useEffect(() => {
+    console.log("integration status effect");
     if (!user?.google_calendar_integrated && data?.integrated) {
       setData({ integrated: false });
     }

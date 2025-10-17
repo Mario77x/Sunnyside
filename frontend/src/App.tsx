@@ -11,6 +11,7 @@ import CreateActivity from "./pages/CreateActivity";
 import WeatherPlanning from "./pages/WeatherPlanning";
 import InviteGuests from "./pages/InviteGuests";
 import GuestResponse from "./pages/GuestResponse";
+import GuestPreview from "./pages/GuestPreview";
 import InviteeResponse from "./pages/InviteeResponse";
 import ResponseReview from "./pages/ResponseReview";
 import VenuePoll from "./pages/VenuePoll";
@@ -40,7 +41,8 @@ const App = () => (
             <Route path="/activity-recommendations" element={<ActivityRecommendations />} />
             <Route path="/activity-suggestions" element={<ActivitySuggestions />} />
             <Route path="/invite-guests" element={<InviteGuests />} />
-            <Route path="/guest" element={<GuestResponse />} />
+            <Route path="/guest/:activityId" element={<GuestResponse />} />
+            <Route path="/guest-preview/:activityId" element={<GuestPreview />} />
             <Route path="/invitee-response" element={<InviteeResponse />} />
             <Route path="/response-review" element={<ResponseReview />} />
             <Route path="/venue-poll" element={<VenuePoll />} />

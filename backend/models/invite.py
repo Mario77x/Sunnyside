@@ -20,6 +20,7 @@ class PublicActivityResponse(BaseModel):
     title: str
     description: Optional[str] = None
     organizer_name: str
+    organizer_id: str
     selected_date: Optional[datetime] = None
     selected_days: list[str] = []
     activity_type: Optional[str] = None
