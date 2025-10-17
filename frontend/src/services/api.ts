@@ -76,7 +76,7 @@ export interface Activity {
   organizer_name?: string;
   title: string;
   description?: string;
-  status: 'planning' | 'invitations-sent' | 'collecting-responses' | 'ready-for-recommendations' | 'recommendations-sent' | 'confirmed' | 'completed';
+  status: 'planning' | 'invitations-sent' | 'collecting-responses' | 'ready-for-recommendations' | 'recommendations-sent' | 'confirmed' | 'completed' | 'finalized';
   timeframe?: string;
   group_size?: string;
   activity_type?: string;
@@ -814,7 +814,7 @@ class ApiService {
     }>;
   }>> {
     const response = await fetch(`${API_BASE_URL}/api/v1/activities/${activityId}/finalize`, {
-      method: 'POST',
+      method: 'PUT',
       headers: this.getAuthHeaders(),
       body: JSON.stringify(finalizeData)
     });
@@ -962,6 +962,40 @@ class ApiService {
     });
     
     return this.handleResponse<SmartSchedulingResponse>(response);
+  }
+
+  // Calendar integration methods for finalization
+  async checkCalendarIntegration(): Promise<ApiResponse<{ has_integration: boolean }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/calendar/status`, {
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<{ has_integration: boolean }>(response);
+  }
+
+  async addToCalendar(eventData: {
+    title: string;
+    description: string;
+    start_time: string;
+    location?: string;
+    attendees?: string[];
+  }): Promise<ApiResponse<{ message: string; event_id?: string }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/calendar/add-event`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(eventData)
+    });
+    
+    return this.handleResponse<{ message: string; event_id?: string }>(response);
+  }
+
+  async triggerNotifications(activityId: string): Promise<ApiResponse<{ notifications_sent: number }>> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/activities/${activityId}/notify`, {
+      method: 'POST',
+      headers: this.getAuthHeaders()
+    });
+    
+    return this.handleResponse<{ notifications_sent: number }>(response);
   }
 }
 

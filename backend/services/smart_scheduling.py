@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timedelta
 from mistralai.client import MistralClient
 import logging
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends
 from .google_calendar import google_calendar_service
@@ -108,7 +109,8 @@ class SmartSchedulingService:
             "organizer_availability": None
         }
         
-        start_date = datetime.now()
+        # Use timezone-aware datetime to prevent comparison errors
+        start_date = datetime.now(ZoneInfo("UTC"))
         end_date = start_date + timedelta(days=days)
         
         # Focus on the first participant (organizer) for calendar data
@@ -278,7 +280,8 @@ class SmartSchedulingService:
     def _generate_popular_time_slots(self) -> List[Dict[str, Any]]:
         """Generate popular time slots when no calendar data is available."""
         popular_slots = []
-        start_date = datetime.now() + timedelta(days=1)  # Start from tomorrow
+        # Use timezone-aware datetime to prevent comparison errors
+        start_date = datetime.now(ZoneInfo("UTC")) + timedelta(days=1)  # Start from tomorrow
         
         # Generate slots for the next 14 days (extended range)
         for i in range(14):

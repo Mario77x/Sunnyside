@@ -271,6 +271,9 @@ const CreateActivity = () => {
     if (!activity && !activityData.description) return;
     
     setIsLoadingSuggestions(true);
+    setSuggestions([]); // Clear previous suggestions to prevent stale data
+    setSelectedSuggestions([]); // Clear selected suggestions
+    
     try {
       // Use "specific" suggestion type for after planning - venue-based suggestions
       const query = `${activity?.description || activityData.description} - looking for specific venues and actionable recommendations`;
@@ -308,7 +311,7 @@ const CreateActivity = () => {
           showError('No suggestions could be generated. Try adjusting your activity description.');
         }
       } else {
-        showError(response.error || 'Failed to generate suggestions. Please try again.');
+        showError(response.data?.error || response.error || 'Failed to generate suggestions. Please try again.');
       }
     } catch (error) {
       console.error('Error fetching suggestions:', error);
@@ -879,12 +882,17 @@ const CreateActivity = () => {
                   if (startingTab === 'recommendations') {
                     // If they started from Get Ideas, go back to that tab
                     setStep('chat');
-                    // Reset the selected idea
+                    // Reset the selected idea and clear any cached state
                     setSelectedIdea(null);
+                    setChatInput('');
                   } else {
                     // If they started from Create Activity, go back to that tab
                     setStep('chat');
+                    // Clear any cached state
+                    setChatInput('');
                   }
+                  // Clear parsed intent to prevent stale data
+                  setParsedIntent(null);
                 }}
                 className="flex-1"
                 style={{ borderColor: '#1155cc', color: '#1155cc' }}

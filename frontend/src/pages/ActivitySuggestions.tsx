@@ -29,6 +29,10 @@ const ActivitySuggestions = () => {
 
     if (location.state?.activity) {
       setActivity(location.state.activity);
+      // Clear previous state to prevent stale data
+      setSuggestions([]);
+      setSelectedSuggestions([]);
+      setError(null);
       // Auto-generate suggestions when the page loads
       generateSuggestions(location.state.activity);
     } else {
@@ -39,13 +43,15 @@ const ActivitySuggestions = () => {
   const generateSuggestions = async (activityData) => {
     setIsLoading(true);
     setError(null);
+    setSuggestions([]); // Clear previous suggestions to prevent stale data
 
     try {
-      // Use the RecommendationGenerator's API call logic with enhanced context
-      const query = `${activityData.description} - looking for specific activity suggestions`;
+      // Use "specific" suggestion type for venue-based suggestions
+      const query = `${activityData.description} - looking for specific venues and actionable recommendations`;
       
       // Build context options from activity data
       const options = {
+        suggestion_type: "specific", // Ensure we get venue-based suggestions
         date: activityData.selected_date,
         indoor_outdoor_preference: activityData.weather_preference || activityData.weatherPreference,
         location: user?.location || activityData.location || 'Amsterdam', // Use user profile location first
@@ -57,10 +63,14 @@ const ActivitySuggestions = () => {
       
       if (response.data && response.data.success) {
         setSuggestions(response.data.recommendations);
+        if (response.data.recommendations.length === 0) {
+          setError('No suggestions could be generated. Try adjusting your activity description.');
+        }
       } else {
         setError(response.data?.error || response.error || 'Failed to get recommendations');
       }
     } catch (err) {
+      console.error('Error generating suggestions:', err);
       setError('Network error occurred while getting recommendations');
     } finally {
       setIsLoading(false);
@@ -116,7 +126,15 @@ const ActivitySuggestions = () => {
   };
 
   const handleBackToRecommendations = () => {
-    navigate('/activity-recommendations', { state: { activity } });
+    // Navigate back to create-activity instead of activity-recommendations
+    // to maintain proper flow and prevent routing issues
+    navigate('/create-activity', {
+      state: {
+        activity,
+        step: 'suggestions-pre-invites' // Go back to the choice step
+      },
+      replace: true // Replace current history entry to prevent back/forward issues
+    });
   };
 
   const handleDashboardNavigation = async () => {
@@ -345,7 +363,12 @@ const ActivitySuggestions = () => {
                   {/* Generate More Button */}
                   <div className="text-center">
                     <Button
-                      onClick={() => generateSuggestions(activity)}
+                      onClick={() => {
+                        // Clear existing suggestions before generating new ones
+                        setSuggestions([]);
+                        setSelectedSuggestions([]);
+                        generateSuggestions(activity);
+                      }}
                       disabled={isLoading}
                       variant="outline"
                       style={{ borderColor: '#ff9900', color: '#ff9900' }}

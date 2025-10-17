@@ -21,6 +21,8 @@ import ActivitySummary from "./pages/ActivitySummary";
 import InviteeActivitySummary from "./pages/InviteeActivitySummary";
 import ActivityRecommendations from "./pages/ActivityRecommendations";
 import ActivitySuggestions from "./pages/ActivitySuggestions";
+import FinalizationPage from "./pages/FinalizationPage";
+import FinalizationSummary from "./pages/FinalizationSummary";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -50,6 +52,8 @@ const App = () => (
             <Route path="/account" element={<Account />} />
             <Route path="/activity-summary" element={<ActivitySummary />} />
             <Route path="/invitee-activity-summary" element={<InviteeActivitySummary />} />
+            <Route path="/finalize-activity" element={<FinalizationPage />} />
+            <Route path="/finalization-summary" element={<FinalizationSummary />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

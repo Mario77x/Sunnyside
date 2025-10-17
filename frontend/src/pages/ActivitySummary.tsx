@@ -14,11 +14,12 @@ import {
   AlertDialogTrigger
 } from '@/components/ui/alert-dialog';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Users, Calendar, Mail, MessageSquare, CheckCircle, Clock, XCircle, Trash2 } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Mail, MessageSquare, CheckCircle, Clock, XCircle, Trash2, Target } from 'lucide-react';
 import { apiService } from '@/services/api';
 import { showSuccess, showError } from '@/utils/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDeadlineText, getDeadlineStatus } from '@/utils/deadlineCalculator';
+import DeadlineCheckModal from '@/components/DeadlineCheckModal';
 
 const ActivitySummary = () => {
   const navigate = useNavigate();
@@ -27,6 +28,7 @@ const ActivitySummary = () => {
   const [activity, setActivity] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [guestExperienceLink, setGuestExperienceLink] = useState<string | null>(null);
+  const [showDeadlineModal, setShowDeadlineModal] = useState(false);
 
   // 1. Component Mount Logging
   console.log('🔍 [ActivitySummary] Component mounted/re-rendered');
@@ -189,6 +191,46 @@ const ActivitySummary = () => {
       case 'no': return 'bg-red-100 text-red-800';
       default: return 'bg-gray-100 text-gray-800';
     }
+  };
+
+  const shouldShowFinalizeButton = () => {
+    if (!activity || activity.status === 'finalized') return false;
+    
+    // Show finalize button if:
+    // 1. There are responses from invitees, OR
+    // 2. The deadline has passed, OR
+    // 3. Activity is in a state ready for finalization, OR
+    // 4. Invitations have been sent (organizer can finalize anytime after sending invites)
+    const hasResponses = activity.invitees?.some(inv => inv.response !== 'pending');
+    const deadlinePassed = activity.deadline ? new Date(activity.deadline) < new Date() : false;
+    const readyForFinalization = ['collecting-responses', 'ready-for-recommendations', 'recommendations-sent'].includes(activity.status);
+    const invitationsSent = ['invitations-sent', 'collecting-responses', 'ready-for-recommendations', 'recommendations-sent'].includes(activity.status);
+    
+    return hasResponses || deadlinePassed || readyForFinalization || invitationsSent;
+  };
+
+  const handleFinalize = () => {
+    if (!activity) return;
+    
+    // Check if deadline has been reached
+    const deadlineReached = activity.deadline ? new Date() >= new Date(activity.deadline) : true;
+    
+    if (deadlineReached) {
+      // Proceed directly to finalization
+      navigate('/finalize-activity', { state: { activity } });
+    } else {
+      // Show deadline check modal
+      setShowDeadlineModal(true);
+    }
+  };
+
+  const handleProceedWithFinalization = () => {
+    setShowDeadlineModal(false);
+    navigate('/finalize-activity', { state: { activity } });
+  };
+
+  const handleCloseDeadlineModal = () => {
+    setShowDeadlineModal(false);
   };
 
   if (!activity) return null;
@@ -422,6 +464,27 @@ const ActivitySummary = () => {
                 console.log('🔍 [ActivitySummary] Button render check - activity?.organizer_id:', activity?.organizer_id);
                 return null;
               })()}
+              
+              <Button
+                onClick={() => navigate('/')}
+                className="w-full"
+                style={{ backgroundColor: '#1155cc', color: 'white' }}
+              >
+                Back to Dashboard
+              </Button>
+              
+              {/* Finalize Button - placed below Back to Dashboard as per requirements */}
+              {shouldShowFinalizeButton() && (
+                <Button
+                  onClick={handleFinalize}
+                  className="w-full"
+                  style={{ backgroundColor: '#ff9900', color: 'white' }}
+                >
+                  <Target className="w-4 h-4 mr-2" />
+                  Finalize Activity
+                </Button>
+              )}
+              
               {user?.role === 'admin' && (
                 <Button
                   onClick={() => navigate(`/guest-preview/${activity.id}`)}
@@ -431,16 +494,17 @@ const ActivitySummary = () => {
                   View Invite (Guest Preview)
                 </Button>
               )}
-              <Button
-                onClick={() => navigate('/')}
-                className="w-full"
-                style={{ backgroundColor: '#1155cc', color: 'white' }}
-              >
-                Back to Dashboard
-              </Button>
             </div>
           </CardContent>
         </Card>
+
+        {/* Deadline Check Modal */}
+        <DeadlineCheckModal
+          isOpen={showDeadlineModal}
+          onClose={handleCloseDeadlineModal}
+          onProceed={handleProceedWithFinalization}
+          deadline={activity?.deadline ? new Date(activity.deadline) : null}
+        />
       </div>
     </div>
   );

@@ -116,7 +116,7 @@ const RecommendationGenerator: React.FC<RecommendationGeneratorProps> = ({
             Activity Recommendations
           </CardTitle>
           <CardDescription>
-            Describe what you're looking for and get personalized activity recommendations with venue details
+            Not sure what to do? Let's brainstorm ideas together with AI!
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

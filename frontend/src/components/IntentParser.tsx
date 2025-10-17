@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,9 +28,10 @@ const IntentParser: React.FC<IntentParserProps> = ({ onIntentParsed, className =
       const response = await apiService.parseIntent(inputText.trim());
       
       if (response.data) {
-        setParsedResult(response.data);
+        const parsedData = response.data.data;
+        setParsedResult(parsedData);
         if (onIntentParsed) {
-          onIntentParsed(response.data);
+          onIntentParsed(parsedData);
         }
       } else {
         setError(response.error || 'Failed to parse intent');

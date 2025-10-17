@@ -103,6 +103,15 @@ class Activity(BaseModel):
     ai_recommendations: Optional[List[AIRecommendation]] = Field(default_factory=list)
     selected_recommendation: Optional[AIRecommendation] = Field(None)
     
+    # Finalization fields
+    finalization_status: Optional[str] = Field(default="pending", description="Finalization status: pending, in_progress, finalized")
+    finalized_date: Optional[datetime] = Field(None, description="Final confirmed date for the activity")
+    finalized_time: Optional[str] = Field(None, description="Final confirmed time for the activity")
+    finalized_venue: Optional[Dict[str, Any]] = Field(None, description="Final confirmed venue details")
+    finalization_timestamp: Optional[datetime] = Field(None, description="When the activity was finalized")
+    final_invites_sent: Optional[bool] = Field(default=False, description="Whether final invites have been sent")
+    calendar_integration_status: Optional[str] = Field(default="not_integrated", description="Calendar integration status")
+    
     # Invitees and responses
     invitees: List[Invitee] = Field(default_factory=list)
     
@@ -198,6 +207,55 @@ class FinalizeActivityRequest(BaseModel):
     """Request model for finalizing activity with selected recommendation."""
     recommendation_id: str = Field(..., description="ID of the selected recommendation")
     final_message: Optional[str] = Field(None, max_length=500, description="Final message to send to attendees")
+
+
+class FinalizationRecommendationsRequest(BaseModel):
+    """Request model for generating finalization recommendations."""
+    activity_id: str = Field(..., description="Activity ID to generate finalization recommendations for")
+
+
+class FinalizationRecommendation(BaseModel):
+    """Model for finalization recommendation (date/venue)."""
+    id: str = Field(..., description="Unique identifier for the recommendation")
+    type: str = Field(..., description="Type of recommendation: 'date' or 'venue'")
+    title: str = Field(..., description="Title of the recommendation")
+    description: str = Field(..., description="Description of the recommendation")
+    reasoning: str = Field(..., description="AI reasoning for this recommendation")
+    confidence: float = Field(..., ge=0, le=1, description="Confidence score 0-1")
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional metadata")
+    created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class FinalizationRecommendationsResponse(BaseModel):
+    """Response model for finalization recommendations."""
+    success: bool
+    date_recommendations: List[FinalizationRecommendation] = []
+    venue_recommendations: List[FinalizationRecommendation] = []
+    activity_id: str
+    confirmed_attendees: int
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
+
+
+class ActivityFinalizationRequest(BaseModel):
+    """Request model for finalizing activity with final details."""
+    finalized_date: Optional[datetime] = Field(None, description="Final confirmed date")
+    finalized_time: Optional[str] = Field(None, description="Final confirmed time")
+    finalized_venue: Optional[Dict[str, Any]] = Field(None, description="Final venue details")
+    final_message: Optional[str] = Field(None, max_length=500, description="Final message to attendees")
+
+
+class FinalInvitesRequest(BaseModel):
+    """Request model for sending final invites."""
+    communication_preferences: Optional[Dict[str, str]] = Field(default_factory=dict, description="Communication channel preferences per invitee")
+    custom_message: Optional[str] = Field(None, max_length=500, description="Custom message for final invites")
+    invitee_list: Optional[List[str]] = Field(None, description="Specific invitees to send to (if not all)")
+
+
+class CalendarIntegrationRequest(BaseModel):
+    """Request model for calendar integration."""
+    calendar_provider: Optional[str] = Field(default="google", description="Calendar provider (google, outlook, etc.)")
+    event_details: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional event details")
 
 
 class ActivitySummaryResponse(BaseModel):

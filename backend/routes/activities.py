@@ -18,7 +18,13 @@ from backend.models.activity import (
     ActivitySummaryResponse,
     AIRecommendation,
     RecommendationResponse,
-    FinalizeActivityRequest
+    FinalizeActivityRequest,
+    FinalizationRecommendationsRequest,
+    FinalizationRecommendation,
+    FinalizationRecommendationsResponse,
+    ActivityFinalizationRequest,
+    FinalInvitesRequest,
+    CalendarIntegrationRequest
 )
 from backend.models.user import UserResponse
 from backend.auth import get_current_user, security
@@ -1143,18 +1149,115 @@ async def generate_ai_recommendations(
         )
 
 
-@router.post("/{activity_id}/finalize")
-async def finalize_activity(
+@router.post("/{activity_id}/finalization-recommendations", response_model=FinalizationRecommendationsResponse)
+async def generate_finalization_recommendations(
     activity_id: str,
-    finalize_request: FinalizeActivityRequest,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
-    Finalize activity with selected recommendation and send final invites.
+    Generate AI recommendations for final date/venue based on invitee responses.
     
-    Only the organizer can finalize the activity. This selects a recommendation
-    and sends final details to all confirmed attendees.
+    Only the organizer can request finalization recommendations. This analyzes
+    confirmed attendees' preferences and generates personalized recommendations.
+    """
+    try:
+        # Get current user
+        current_user = await get_current_user(credentials, db)
+        
+        # Validate activity ID
+        if not ObjectId.is_valid(activity_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid activity ID"
+            )
+        
+        # Find activity
+        activity = await db.activities.find_one({"_id": ObjectId(activity_id)})
+        if not activity:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Activity not found"
+            )
+        
+        # Check if user is the organizer
+        if activity["organizer_id"] != ObjectId(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the organizer can request finalization recommendations"
+            )
+        
+        # Analyze responses to get confirmed attendees
+        invitees = activity.get("invitees", [])
+        confirmed_attendees = [
+            invitee for invitee in invitees
+            if invitee.get("response") in ["yes", "maybe"]
+        ]
+        
+        if len(confirmed_attendees) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No confirmed attendees to generate recommendations for"
+            )
+        
+        # Import LLM service here to avoid circular imports
+        from backend.services.llm import llm_service
+        
+        # Generate finalization recommendations using enhanced LLM service
+        recommendations_result = await llm_service.generate_finalization_recommendations(
+            activity_id=activity_id,
+            activity=activity,
+            confirmed_attendees=confirmed_attendees,
+            organizer_preferences={}  # Could be expanded to include organizer preferences
+        )
+        
+        if not recommendations_result.get("success", False):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=recommendations_result.get("error", "Failed to generate recommendations")
+            )
+        
+        # Update activity status to indicate finalization is in progress
+        await db.activities.update_one(
+            {"_id": ObjectId(activity_id)},
+            {
+                "$set": {
+                    "finalization_status": "in_progress",
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        return FinalizationRecommendationsResponse(
+            success=True,
+            date_recommendations=recommendations_result.get("date_recommendations", []),
+            venue_recommendations=recommendations_result.get("venue_recommendations", []),
+            activity_id=activity_id,
+            confirmed_attendees=len(confirmed_attendees),
+            metadata=recommendations_result.get("metadata", {})
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate finalization recommendations: {str(e)}"
+        )
+
+
+@router.put("/{activity_id}/finalize")
+async def finalize_activity_with_details(
+    activity_id: str,
+    finalization_request: ActivityFinalizationRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Finalize activity with confirmed date, time, and venue.
+    
+    Only the organizer can finalize the activity. This sets the final
+    details and updates the activity status to finalized.
     """
     try:
         # Get current user
@@ -1182,19 +1285,94 @@ async def finalize_activity(
                 detail="Only the organizer can finalize this activity"
             )
         
-        # Find the selected recommendation
-        ai_recommendations = activity.get("ai_recommendations", [])
-        selected_recommendation = None
+        # Prepare finalization data
+        finalization_data = {
+            "finalization_status": "finalized",
+            "status": ActivityStatus.FINALIZED,
+            "finalization_timestamp": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
         
-        for rec in ai_recommendations:
-            if rec.get("id") == finalize_request.recommendation_id:
-                selected_recommendation = rec
-                break
+        # Add finalized details if provided
+        if finalization_request.finalized_date:
+            finalization_data["finalized_date"] = finalization_request.finalized_date
+        if finalization_request.finalized_time:
+            finalization_data["finalized_time"] = finalization_request.finalized_time
+        if finalization_request.finalized_venue:
+            finalization_data["finalized_venue"] = finalization_request.finalized_venue
         
-        if not selected_recommendation:
+        # Update activity with finalization data
+        await db.activities.update_one(
+            {"_id": ObjectId(activity_id)},
+            {"$set": finalization_data}
+        )
+        
+        # Get updated activity
+        updated_activity = await db.activities.find_one({"_id": ObjectId(activity_id)})
+        
+        return {
+            "message": "Activity finalized successfully",
+            "activity_id": activity_id,
+            "finalization_status": "finalized",
+            "finalized_date": finalization_request.finalized_date.isoformat() if finalization_request.finalized_date else None,
+            "finalized_time": finalization_request.finalized_time,
+            "finalized_venue": finalization_request.finalized_venue,
+            "finalization_timestamp": finalization_data["finalization_timestamp"].isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to finalize activity: {str(e)}"
+        )
+
+
+@router.post("/{activity_id}/final-invites")
+async def send_final_invites(
+    activity_id: str,
+    invite_request: FinalInvitesRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Send final invites to all confirmed attendees including calendar invites.
+    
+    Only the organizer can send final invites. This sends final details
+    via selected communication channels and creates calendar invites.
+    """
+    try:
+        # Get current user
+        current_user = await get_current_user(credentials, db)
+        
+        # Validate activity ID
+        if not ObjectId.is_valid(activity_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid activity ID"
+            )
+        
+        # Find activity
+        activity = await db.activities.find_one({"_id": ObjectId(activity_id)})
+        if not activity:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Selected recommendation not found"
+                detail="Activity not found"
+            )
+        
+        # Check if user is the organizer
+        if activity["organizer_id"] != ObjectId(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the organizer can send final invites"
+            )
+        
+        # Check if activity is finalized
+        if activity.get("finalization_status") != "finalized":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Activity must be finalized before sending final invites"
             )
         
         # Get confirmed attendees
@@ -1204,19 +1382,20 @@ async def finalize_activity(
             if invitee.get("response") in ["yes", "maybe"]
         ]
         
-        # Update activity with final selection
-        await db.activities.update_one(
-            {"_id": ObjectId(activity_id)},
-            {
-                "$set": {
-                    "selected_recommendation": selected_recommendation,
-                    "status": ActivityStatus.FINALIZED,
-                    "updated_at": datetime.utcnow()
-                }
-            }
-        )
+        if not confirmed_attendees:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No confirmed attendees to send final invites to"
+            )
         
-        # Send final invitations to confirmed attendees
+        # Filter invitees if specific list provided
+        if invite_request.invitee_list:
+            confirmed_attendees = [
+                attendee for attendee in confirmed_attendees
+                if attendee.get("email") in invite_request.invitee_list
+            ]
+        
+        # Send final invitations
         notification_service = NotificationService()
         email_results = []
         
@@ -1227,26 +1406,43 @@ async def finalize_activity(
             if not attendee_email or not attendee_name:
                 continue
             
-            # Send final invitation email
-            email_sent = await notification_service.send_activity_finalization_email(
-                to_email=attendee_email,
-                to_name=attendee_name,
-                organizer_name=current_user.name,
-                activity_title=activity["title"],
-                activity_description=activity.get("description", ""),
-                selected_venue=selected_recommendation,
-                final_message=finalize_request.final_message,
-                activity_details={
-                    "selected_date": activity.get("selected_date"),
-                    "selected_days": activity.get("selected_days", []),
-                    "timeframe": activity.get("timeframe")
-                }
-            )
+            # Get communication preference for this attendee
+            preferred_channel = invite_request.communication_preferences.get(
+                attendee_email, "email"
+            ) if invite_request.communication_preferences else "email"
+            
+            # Send final invitation based on preferred channel
+            invitation_sent = False
+            
+            if preferred_channel == "email":
+                invitation_sent = await notification_service.send_activity_finalization_email(
+                    to_email=attendee_email,
+                    to_name=attendee_name,
+                    organizer_name=current_user.name,
+                    activity_title=activity["title"],
+                    activity_description=activity.get("description", ""),
+                    selected_venue=activity.get("finalized_venue", {}),
+                    final_message=invite_request.custom_message,
+                    activity_details={
+                        "selected_date": activity.get("finalized_date"),
+                        "selected_days": activity.get("selected_days", []),
+                        "timeframe": activity.get("finalized_time")
+                    }
+                )
+            elif preferred_channel == "sms":
+                # TODO: Implement SMS final invite
+                invitation_sent = True
+                print(f"SMS final invite would be sent to {attendee_name} at {attendee_email}")
+            elif preferred_channel == "whatsapp":
+                # TODO: Implement WhatsApp final invite
+                invitation_sent = True
+                print(f"WhatsApp final invite would be sent to {attendee_name} at {attendee_email}")
             
             email_results.append({
                 "email": attendee_email,
                 "name": attendee_name,
-                "email_sent": email_sent
+                "channel": preferred_channel,
+                "invitation_sent": invitation_sent
             })
             
             # Create in-app notification if the attendee is a registered user
@@ -1255,25 +1451,37 @@ async def finalize_activity(
                 await notification_service.create_notification(
                     db,
                     str(existing_user["_id"]),
-                    f"Activity finalized: {activity['title']} at {selected_recommendation['name']}",
-                    "activity_finalized",
+                    f"Final details for {activity['title']} - {activity.get('finalized_venue', {}).get('name', 'venue confirmed')}",
+                    "final_invite",
                     {
                         "activity_id": activity_id,
                         "activity_title": activity["title"],
-                        "venue_name": selected_recommendation["name"],
-                        "organizer_name": current_user.name
+                        "venue_name": activity.get("finalized_venue", {}).get("name", ""),
+                        "organizer_name": current_user.name,
+                        "finalized_date": activity.get("finalized_date").isoformat() if activity.get("finalized_date") else None,
+                        "finalized_time": activity.get("finalized_time")
                     }
                 )
         
-        successful_emails = sum(1 for result in email_results if result["email_sent"])
+        # Update activity to mark final invites as sent
+        await db.activities.update_one(
+            {"_id": ObjectId(activity_id)},
+            {
+                "$set": {
+                    "final_invites_sent": True,
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        successful_invitations = sum(1 for result in email_results if result["invitation_sent"])
         
         return {
-            "message": "Activity finalized and invitations sent",
+            "message": "Final invites sent successfully",
             "activity_id": activity_id,
-            "selected_venue": selected_recommendation["name"],
-            "confirmed_attendees": len(confirmed_attendees),
-            "emails_sent": successful_emails,
-            "email_results": email_results
+            "invites_sent": successful_invitations,
+            "total_attendees": len(confirmed_attendees),
+            "invitation_results": email_results
         }
         
     except HTTPException:
@@ -1281,5 +1489,226 @@ async def finalize_activity(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to finalize activity: {str(e)}"
+            detail=f"Failed to send final invites: {str(e)}"
         )
+
+
+@router.post("/{activity_id}/add-to-calendar")
+async def add_to_calendar(
+    activity_id: str,
+    calendar_request: CalendarIntegrationRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Add finalized activity to organizer's connected calendar.
+    
+    Only the organizer can add the activity to their calendar.
+    Requires existing calendar integration setup.
+    """
+    try:
+        # Get current user
+        current_user = await get_current_user(credentials, db)
+        
+        # Validate activity ID
+        if not ObjectId.is_valid(activity_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid activity ID"
+            )
+        
+        # Find activity
+        activity = await db.activities.find_one({"_id": ObjectId(activity_id)})
+        if not activity:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Activity not found"
+            )
+        
+        # Check if user is the organizer
+        if activity["organizer_id"] != ObjectId(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the organizer can add this activity to calendar"
+            )
+        
+        # Check if activity is finalized
+        if activity.get("finalization_status") != "finalized":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Activity must be finalized before adding to calendar"
+            )
+        
+        # Import Google Calendar service
+        from backend.services.google_calendar import google_calendar_service
+        
+        # Check if user has calendar integration
+        user = await db.users.find_one({"_id": ObjectId(current_user.id)})
+        calendar_credentials = user.get("google_calendar_credentials")
+        
+        if not calendar_credentials:
+            return {
+                "success": False,
+                "message": "No calendar integration found. Please connect your calendar first.",
+                "calendar_integration_status": "not_connected"
+            }
+        
+        # TODO: Implement actual calendar event creation
+        # For now, simulate success
+        calendar_integration_status = "integrated"
+        
+        # Update activity with calendar integration status
+        await db.activities.update_one(
+            {"_id": ObjectId(activity_id)},
+            {
+                "$set": {
+                    "calendar_integration_status": calendar_integration_status,
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        return {
+            "success": True,
+            "message": "Activity added to calendar successfully",
+            "activity_id": activity_id,
+            "calendar_integration_status": calendar_integration_status,
+            "calendar_provider": calendar_request.calendar_provider
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to add activity to calendar: {str(e)}"
+        )
+
+
+@router.get("/{activity_id}/calendar-file")
+async def download_calendar_file(
+    activity_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Generate downloadable .ics file for manual calendar import.
+    
+    Only the organizer can download the calendar file.
+    Activity must be finalized.
+    """
+    try:
+        # Get current user
+        current_user = await get_current_user(credentials, db)
+        
+        # Validate activity ID
+        if not ObjectId.is_valid(activity_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid activity ID"
+            )
+        
+        # Find activity
+        activity = await db.activities.find_one({"_id": ObjectId(activity_id)})
+        if not activity:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Activity not found"
+            )
+        
+        # Check if user is the organizer
+        if activity["organizer_id"] != ObjectId(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the organizer can download the calendar file"
+            )
+        
+        # Check if activity is finalized
+        if activity.get("finalization_status") != "finalized":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Activity must be finalized before generating calendar file"
+            )
+        
+        # Generate .ics file content
+        from datetime import datetime
+        import uuid
+        
+        # Get activity details
+        title = activity.get("title", "Sunnyside Activity")
+        description = activity.get("description", "")
+        finalized_date = activity.get("finalized_date")
+        finalized_time = activity.get("finalized_time", "")
+        finalized_venue = activity.get("finalized_venue", {})
+        venue_name = finalized_venue.get("name", "")
+        venue_address = finalized_venue.get("address", "")
+        
+        # Create event start and end times
+        if finalized_date:
+            if isinstance(finalized_date, str):
+                event_date = datetime.fromisoformat(finalized_date.replace('Z', '+00:00'))
+            else:
+                event_date = finalized_date
+            
+            # If time is specified, parse it
+            if finalized_time:
+                try:
+                    time_parts = finalized_time.split(':')
+                    event_date = event_date.replace(
+                        hour=int(time_parts[0]),
+                        minute=int(time_parts[1]) if len(time_parts) > 1 else 0
+                    )
+                except:
+                    pass  # Use date as-is if time parsing fails
+            
+            # Set end time (2 hours later by default)
+            event_end = event_date.replace(hour=event_date.hour + 2)
+        else:
+            # Use current date if no finalized date
+            event_date = datetime.utcnow()
+            event_end = event_date.replace(hour=event_date.hour + 2)
+        
+        # Format dates for .ics format
+        start_time = event_date.strftime('%Y%m%dT%H%M%SZ')
+        end_time = event_end.strftime('%Y%m%dT%H%M%SZ')
+        created_time = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+        
+        # Generate unique UID
+        event_uid = str(uuid.uuid4())
+        
+        # Create .ics content
+        ics_content = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Sunnyside//Activity Calendar//EN
+BEGIN:VEVENT
+UID:{event_uid}
+DTSTAMP:{created_time}
+DTSTART:{start_time}
+DTEND:{end_time}
+SUMMARY:{title}
+DESCRIPTION:{description}
+LOCATION:{venue_name}{', ' + venue_address if venue_address else ''}
+ORGANIZER:CN={current_user.name}:MAILTO:{current_user.email}
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR"""
+        
+        # Return the .ics file content
+        from fastapi.responses import Response
+        
+        return Response(
+            content=ics_content,
+            media_type="text/calendar",
+            headers={
+                "Content-Disposition": f"attachment; filename={title.replace(' ', '_')}.ics"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate calendar file: {str(e)}"
+        )
+

@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from typing import Dict, Any, Optional, List
+import json
 from ..services.llm import llm_service
 from ..services.risk_assessment import get_risk_assessment_service
 from ..services.smart_scheduling import SmartSchedulingService, get_smart_scheduling_service
@@ -418,7 +419,8 @@ async def test_parse_intent():
 
 @router.post("/recommendations", response_model=RecommendationsResponse)
 async def get_activity_recommendations(
-    request: RecommendationsRequest,
+    request_data: RecommendationsRequest,
+    raw_request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db = Depends(get_database)
 ) -> RecommendationsResponse:
@@ -439,58 +441,74 @@ async def get_activity_recommendations(
         HTTPException: If the request is invalid or processing fails
     """
     try:
+        # Log raw request for debugging 422 errors
+        try:
+            raw_body = await raw_request.body()
+            print(f"[DEBUG] Raw request body: {raw_body.decode('utf-8')}")
+        except Exception as e:
+            print(f"[DEBUG] Could not read raw request body: {e}")
+        
         # Get current user for location context
         current_user = await get_current_user(credentials, db)
         
-        # DEBUG: Log the incoming request payload
-        print(f"[DEBUG] Recommendations request received:")
-        print(f"[DEBUG] Query: {request.query}")
-        print(f"[DEBUG] Max results: {request.max_results}")
-        print(f"[DEBUG] Weather data: {request.weather_data}")
-        print(f"[DEBUG] Date: {request.date}")
-        print(f"[DEBUG] Indoor/outdoor preference: {request.indoor_outdoor_preference}")
-        print(f"[DEBUG] Location: {request.location}")
-        print(f"[DEBUG] User location: {current_user.location}")
-        print(f"[DEBUG] Group size: {request.group_size}")
+        # Log basic request info for monitoring
+        print(f"[INFO] Recommendations request: query='{request_data.query[:50]}...', group_size={request_data.group_size}, location={request_data.location}")
         
         # Validate input
-        if not request.query or not request.query.strip():
+        if not request_data.query or not request_data.query.strip():
             raise HTTPException(
                 status_code=400,
                 detail="Query cannot be empty"
             )
         
         # Use user's profile location if no location provided in request
-        effective_location = request.location or current_user.location or "Amsterdam"
-        print(f"[DEBUG] Effective location: {effective_location}")
+        effective_location = request_data.location or current_user.location or "Amsterdam"
         
         # Get recommendations using the LLM service
         result = await llm_service.get_recommendations(
-            query=request.query.strip(),
-            max_results=request.max_results,
-            weather_data=request.weather_data,
-            date=request.date,
-            indoor_outdoor_preference=request.indoor_outdoor_preference,
+            query=request_data.query.strip(),
+            max_results=request_data.max_results,
+            weather_data=request_data.weather_data,
+            date=request_data.date,
+            indoor_outdoor_preference=request_data.indoor_outdoor_preference,
             location=effective_location,
-            group_size=request.group_size,
-            suggestion_type=request.suggestion_type
+            group_size=request_data.group_size,
+            suggestion_type=request_data.suggestion_type
         )
         
         # Return the result
         return RecommendationsResponse(
             success=result.get("success", False),
             recommendations=result.get("recommendations", []),
-            query=result.get("query", request.query),
+            query=result.get("query", request_data.query),
             retrieved_activities=result.get("retrieved_activities", 0),
             metadata=result.get("metadata", {}),
             error=result.get("error")
         )
         
-    except HTTPException:
+    except ValidationError as validation_error:
+        # Log detailed validation errors for monitoring
+        print(f"[ERROR] 422 VALIDATION ERROR DETAILS:")
+        print(f"[ERROR] Validation errors: {validation_error.errors()}")
+        print(f"[ERROR] Request data that failed validation:")
+        print(f"[ERROR] - query: {getattr(request_data, 'query', 'NOT_SET')}")
+        print(f"[ERROR] - max_results: {getattr(request_data, 'max_results', 'NOT_SET')}")
+        print(f"[ERROR] - location: {getattr(request_data, 'location', 'NOT_SET')}")
+        print(f"[ERROR] - group_size: {getattr(request_data, 'group_size', 'NOT_SET')}")
+        print(f"[ERROR] - suggestion_type: {getattr(request_data, 'suggestion_type', 'NOT_SET')}")
+        print(f"[ERROR] - date: {getattr(request_data, 'date', 'NOT_SET')}")
+        print(f"[ERROR] - indoor_outdoor_preference: {getattr(request_data, 'indoor_outdoor_preference', 'NOT_SET')}")
+        print(f"[ERROR] - weather_data: {getattr(request_data, 'weather_data', 'NOT_SET')}")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Validation error: {validation_error.errors()}"
+        )
+    except HTTPException as http_exc:
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        # Handle unexpected errors
+        # Log unexpected errors
+        print(f"[ERROR] Unexpected error in recommendations: {type(e).__name__}: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error while generating recommendations: {str(e)}"
